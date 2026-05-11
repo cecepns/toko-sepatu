@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { FileSpreadsheet, FileText } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
+import { DataTable } from '@/components/DataTable';
 import { reportService } from '@/services/reportService';
-import { formatCurrency, formatExportDate } from '@/utils/format';
+import { formatCurrency, formatExportDate, formatReportPeriod } from '@/utils/format';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -16,22 +17,22 @@ const tabs = [
   { id: 'attendance', label: 'Absensi' },
 ];
 
-function rowsForSheet(tab, rows) {
+function rowsForSheet(tab, period, rows) {
   if (tab === 'sales') {
     return rows.map((r) => ({
-      Periode: r.period,
+      Periode: formatReportPeriod(r.period, period),
       Transaksi: r.trx,
-      Pendapatan: Number(r.revenue) || 0,
-      'Pendapatan (teks)': formatCurrency(r.revenue),
+      Pendapatan: formatCurrency(r.revenue),
+      'Est. laba kotor': formatCurrency(r.gross_profit_estimate),
     }));
   }
   if (tab === 'pl') {
     return rows.map((r) => ({
       'No Invoice': r.sale_number,
       Tanggal: formatExportDate(r.created_at),
-      Subtotal: Number(r.subtotal) || 0,
-      COGS: Number(r.cogs) || 0,
-      Total: Number(r.grand_total) || 0,
+      Subtotal: formatCurrency(r.subtotal),
+      COGS: formatCurrency(r.cogs),
+      Total: formatCurrency(r.grand_total),
     }));
   }
   if (tab === 'stock') {
@@ -46,7 +47,7 @@ function rowsForSheet(tab, rows) {
   }
   if (tab === 'bestsellers') {
     return rows.map((r) => ({
-      'Cabang ID': r.branch_id,
+      Cabang: r.branch_name ?? r.branch_id,
       SKU: r.sku,
       Produk: r.name,
       Terjual: r.qty_sold,
@@ -60,8 +61,54 @@ function rowsForSheet(tab, rows) {
     Masuk: formatExportDate(r.clock_in_at),
     Keluar: r.clock_out_at ? formatExportDate(r.clock_out_at) : '-',
     Status: r.status,
-    'Jarak (m)': r.distance_in_meters ?? '',
   }));
+}
+
+function reportColumns(tab, period) {
+  if (tab === 'sales') {
+    return [
+      { key: 'period', label: 'Periode', render: (r) => formatReportPeriod(r.period, period) },
+      { key: 'trx', label: 'Transaksi', render: (r) => <span className="tabular-nums">{r.trx}</span> },
+      { key: 'revenue', label: 'Pendapatan', render: (r) => formatCurrency(r.revenue) },
+      { key: 'gross_profit_estimate', label: 'Est. laba kotor', render: (r) => formatCurrency(r.gross_profit_estimate) },
+    ];
+  }
+  if (tab === 'pl') {
+    return [
+      { key: 'sale_number', label: 'No. invoice', render: (r) => <span className="font-mono text-xs">{r.sale_number}</span> },
+      { key: 'created_at', label: 'Tanggal', render: (r) => formatExportDate(r.created_at) },
+      { key: 'subtotal', label: 'Subtotal', render: (r) => formatCurrency(r.subtotal) },
+      { key: 'cogs', label: 'COGS', render: (r) => formatCurrency(r.cogs) },
+      { key: 'grand_total', label: 'Grand total', render: (r) => <span className="font-medium">{formatCurrency(r.grand_total)}</span> },
+    ];
+  }
+  if (tab === 'stock') {
+    return [
+      { key: 'branch_name', label: 'Cabang', render: (r) => r.branch_name },
+      { key: 'sku', label: 'SKU', render: (r) => <span className="font-mono text-xs">{r.sku}</span> },
+      { key: 'name', label: 'Produk', render: (r) => r.name },
+      { key: 'quantity', label: 'Qty', render: (r) => <span className="tabular-nums">{r.quantity}</span> },
+      { key: 'min_stock', label: 'Min', render: (r) => r.min_stock },
+      { key: 'central_qty', label: 'Stok pusat', render: (r) => (r.central_qty != null ? r.central_qty : '—') },
+    ];
+  }
+  if (tab === 'bestsellers') {
+    return [
+      { key: 'branch', label: 'Cabang', render: (r) => r.branch_name ?? `#${r.branch_id}` },
+      { key: 'sku', label: 'SKU', render: (r) => <span className="font-mono text-xs">{r.sku}</span> },
+      { key: 'name', label: 'Produk', render: (r) => r.name },
+      { key: 'qty_sold', label: 'Terjual', render: (r) => <span className="tabular-nums">{r.qty_sold}</span> },
+      { key: 'revenue', label: 'Pendapatan', render: (r) => formatCurrency(r.revenue) },
+    ];
+  }
+  return [
+    { key: 'full_name', label: 'Nama', render: (r) => r.full_name },
+    { key: 'employee_code', label: 'Kode', render: (r) => <span className="font-mono text-xs">{r.employee_code}</span> },
+    { key: 'branch_name', label: 'Cabang', render: (r) => r.branch_name },
+    { key: 'clock_in_at', label: 'Masuk', render: (r) => formatExportDate(r.clock_in_at) },
+    { key: 'clock_out_at', label: 'Keluar', render: (r) => (r.clock_out_at ? formatExportDate(r.clock_out_at) : '—') },
+    { key: 'status', label: 'Status', render: (r) => r.status },
+  ];
 }
 
 export default function ReportsPage() {
@@ -80,9 +127,11 @@ export default function ReportsPage() {
       else if (tab === 'bestsellers') res = await reportService.bestsellers({ limit: 50, page: 1 });
       else res = await reportService.attendance({ limit: 50, page: 1 });
       if (!res.success) throw new Error(res.message);
-      setRows(res.data || []);
+      const raw = res.data;
+      setRows(Array.isArray(raw) ? raw : []);
     } catch (e) {
       toast.error(e.message);
+      setRows([]);
     } finally {
       setLoading(false);
     }
@@ -93,8 +142,10 @@ export default function ReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, period]);
 
+  const columns = useMemo(() => reportColumns(tab, period), [tab, period]);
+
   const exportExcel = () => {
-    const data = rowsForSheet(tab, rows);
+    const data = rowsForSheet(tab, period, rows);
     const ws = XLSX.utils.json_to_sheet(data.length ? data : [{ Info: 'Tidak ada data' }]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, tab.slice(0, 28));
@@ -104,12 +155,17 @@ export default function ReportsPage() {
 
   const exportPdf = () => {
     const doc = new jsPDF({ orientation: 'landscape' });
-    doc.text(`Laporan — ${tab}`, 14, 12);
+    doc.text(`Laporan — ${tabs.find((t) => t.id === tab)?.label ?? tab}`, 14, 12);
     let head;
     let body;
     if (tab === 'sales') {
-      head = [['Periode', 'Trx', 'Pendapatan']];
-      body = rows.map((r) => [String(r.period ?? ''), String(r.trx ?? ''), formatCurrency(r.revenue)]);
+      head = [['Periode', 'Trx', 'Pendapatan', 'Est. laba kotor']];
+      body = rows.map((r) => [
+        formatReportPeriod(r.period, period),
+        String(r.trx ?? ''),
+        formatCurrency(r.revenue),
+        formatCurrency(r.gross_profit_estimate),
+      ]);
     } else if (tab === 'pl') {
       head = [['No Invoice', 'Tanggal', 'Subtotal', 'COGS', 'Grand']];
       body = rows.slice(0, 40).map((r) => [
@@ -120,11 +176,11 @@ export default function ReportsPage() {
         formatCurrency(r.grand_total),
       ]);
     } else if (tab === 'stock') {
-      head = [['Cabang', 'SKU', 'Produk', 'Qty', 'Min']];
-      body = rows.slice(0, 40).map((r) => [r.branch_name, r.sku, r.name, r.quantity, r.min_stock]);
+      head = [['Cabang', 'SKU', 'Produk', 'Qty', 'Min', 'Pusat']];
+      body = rows.slice(0, 40).map((r) => [r.branch_name, r.sku, r.name, r.quantity, r.min_stock, r.central_qty ?? '—']);
     } else if (tab === 'bestsellers') {
       head = [['Cabang', 'SKU', 'Produk', 'Qty', 'Pendapatan']];
-      body = rows.slice(0, 40).map((r) => [String(r.branch_id), r.sku, r.name, r.qty_sold, formatCurrency(r.revenue)]);
+      body = rows.slice(0, 40).map((r) => [r.branch_name ?? String(r.branch_id), r.sku, r.name, r.qty_sold, formatCurrency(r.revenue)]);
     } else {
       head = [['Nama', 'Kode', 'Cabang', 'Masuk', 'Keluar', 'Status']];
       body = rows.slice(0, 40).map((r) => [
@@ -141,147 +197,11 @@ export default function ReportsPage() {
     toast.success('PDF diunduh');
   };
 
-  const tableContent = useMemo(() => {
-    if (!rows.length) {
-      return (
-        <tbody>
-          <tr>
-            <td className="px-4 py-10 text-center text-slate-500">Tidak ada data</td>
-          </tr>
-        </tbody>
-      );
-    }
-    if (tab === 'sales') {
-      return (
-        <>
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              <th className="px-4 py-3 text-left font-medium">Periode</th>
-              <th className="px-4 py-3 text-right font-medium">Transaksi</th>
-              <th className="px-4 py-3 text-right font-medium">Pendapatan</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {rows.slice(0, 100).map((r, i) => (
-              <tr key={i} className="hover:bg-slate-50/80">
-                <td className="px-4 py-2.5">{r.period}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums">{r.trx}</td>
-                <td className="px-4 py-2.5 text-right font-medium">{formatCurrency(r.revenue)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </>
-      );
-    }
-    if (tab === 'pl') {
-      return (
-        <>
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              <th className="px-4 py-3 text-left font-medium">No</th>
-              <th className="px-4 py-3 text-left font-medium">Tanggal</th>
-              <th className="px-4 py-3 text-right font-medium">Subtotal</th>
-              <th className="px-4 py-3 text-right font-medium">COGS</th>
-              <th className="px-4 py-3 text-right font-medium">Grand</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {rows.slice(0, 100).map((r) => (
-              <tr key={r.id} className="hover:bg-slate-50/80">
-                <td className="px-4 py-2.5 font-mono text-xs">{r.sale_number}</td>
-                <td className="px-4 py-2.5 whitespace-nowrap">{formatExportDate(r.created_at)}</td>
-                <td className="px-4 py-2.5 text-right">{formatCurrency(r.subtotal)}</td>
-                <td className="px-4 py-2.5 text-right">{formatCurrency(r.cogs)}</td>
-                <td className="px-4 py-2.5 text-right font-medium">{formatCurrency(r.grand_total)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </>
-      );
-    }
-    if (tab === 'stock') {
-      return (
-        <>
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              <th className="px-4 py-3 text-left font-medium">Cabang</th>
-              <th className="px-4 py-3 text-left font-medium">SKU</th>
-              <th className="px-4 py-3 text-left font-medium">Produk</th>
-              <th className="px-4 py-3 text-right font-medium">Qty</th>
-              <th className="px-4 py-3 text-right font-medium">Min</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {rows.slice(0, 100).map((r, i) => (
-              <tr key={`${r.branch_id}-${r.product_id}-${i}`} className="hover:bg-slate-50/80">
-                <td className="px-4 py-2.5">{r.branch_name}</td>
-                <td className="px-4 py-2.5 font-mono text-xs">{r.sku}</td>
-                <td className="px-4 py-2.5">{r.name}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums">{r.quantity}</td>
-                <td className="px-4 py-2.5 text-right">{r.min_stock}</td>
-              </tr>
-            ))}
-          </tbody>
-        </>
-      );
-    }
-    if (tab === 'bestsellers') {
-      return (
-        <>
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              <th className="px-4 py-3 text-left font-medium">Cabang</th>
-              <th className="px-4 py-3 text-left font-medium">SKU</th>
-              <th className="px-4 py-3 text-left font-medium">Produk</th>
-              <th className="px-4 py-3 text-right font-medium">Terjual</th>
-              <th className="px-4 py-3 text-right font-medium">Pendapatan</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {rows.slice(0, 100).map((r, i) => (
-              <tr key={`${r.branch_id}-${r.id}-${i}`} className="hover:bg-slate-50/80">
-                <td className="px-4 py-2.5">{r.branch_id}</td>
-                <td className="px-4 py-2.5 font-mono text-xs">{r.sku}</td>
-                <td className="px-4 py-2.5">{r.name}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums">{r.qty_sold}</td>
-                <td className="px-4 py-2.5 text-right">{formatCurrency(r.revenue)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </>
-      );
-    }
-    return (
-      <>
-        <thead className="bg-slate-50 text-slate-600">
-          <tr>
-            <th className="px-4 py-3 text-left font-medium">Nama</th>
-            <th className="px-4 py-3 text-left font-medium">Kode</th>
-            <th className="px-4 py-3 text-left font-medium">Cabang</th>
-            <th className="px-4 py-3 text-left font-medium">Masuk</th>
-            <th className="px-4 py-3 text-left font-medium">Keluar</th>
-            <th className="px-4 py-3 text-left font-medium">Status</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {rows.slice(0, 100).map((r) => (
-            <tr key={r.id} className="hover:bg-slate-50/80">
-              <td className="px-4 py-2.5">{r.full_name}</td>
-              <td className="px-4 py-2.5 font-mono text-xs">{r.employee_code}</td>
-              <td className="px-4 py-2.5">{r.branch_name}</td>
-              <td className="px-4 py-2.5 whitespace-nowrap">{formatExportDate(r.clock_in_at)}</td>
-              <td className="px-4 py-2.5 whitespace-nowrap">{r.clock_out_at ? formatExportDate(r.clock_out_at) : '-'}</td>
-              <td className="px-4 py-2.5">{r.status}</td>
-            </tr>
-          ))}
-        </tbody>
-      </>
-    );
-  }, [tab, rows]);
+  const noop = () => {};
 
   return (
     <div>
-      <PageHeader title="Laporan" subtitle="Export PDF & Excel" />
+      <PageHeader title="Laporan" subtitle="Tabel ringkas — export PDF & Excel" />
       <div className="mb-4 flex flex-wrap gap-2">
         {tabs.map((x) => (
           <button
@@ -319,13 +239,21 @@ export default function ReportsPage() {
           <FileText className="h-4 w-4" /> PDF
         </button>
       </div>
-      <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-        {loading ? (
-          <div className="p-12 text-center text-slate-500">Memuat…</div>
-        ) : (
-          <table className="min-w-full text-left text-sm">{tableContent}</table>
-        )}
-      </div>
+
+      <DataTable
+        hideControls
+        columns={columns}
+        rows={rows.slice(0, 100)}
+        loading={loading}
+        emptyText="Tidak ada data"
+        search=""
+        onSearchChange={noop}
+        sortKey=""
+        sortOrder="desc"
+        onSort={noop}
+        limit={10}
+        onLimitChange={noop}
+      />
     </div>
   );
 }

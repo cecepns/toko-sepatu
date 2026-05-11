@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
+import Select from 'react-select';
 import { Plus, Eye, Check, XCircle } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
@@ -7,35 +8,86 @@ import { Modal } from '@/components/Modal';
 import { useServerTable } from '@/hooks/useServerTable';
 import { transferService } from '@/services/transferService';
 import { productService } from '@/services/productService';
+import { branchService } from '@/services/branchService';
 import { useAuth } from '@/contexts/AuthContext';
 import { confirmToast } from '@/utils/confirm';
+
+const branchSelectStyles = {
+  control: (base, state) => ({
+    ...base,
+    minHeight: 42,
+    borderRadius: '0.75rem',
+    borderColor: state.isFocused ? '#0ea5e9' : '#e2e8f0',
+    boxShadow: state.isFocused ? '0 0 0 2px rgba(14, 165, 233, 0.15)' : 'none',
+    fontSize: '0.875rem',
+    '&:hover': { borderColor: '#cbd5e1' },
+  }),
+  menuPortal: (base) => ({ ...base, zIndex: 100 }),
+  menu: (base) => ({ ...base, borderRadius: '0.75rem', overflow: 'hidden' }),
+  option: (base, state) => ({
+    ...base,
+    fontSize: '0.875rem',
+    backgroundColor: state.isSelected ? '#0284c7' : state.isFocused ? '#f1f5f9' : 'white',
+    color: state.isSelected ? 'white' : '#1e293b',
+  }),
+  singleValue: (base) => ({ ...base, color: '#0f172a' }),
+  placeholder: (base) => ({ ...base, color: '#94a3b8' }),
+};
 
 export default function TransfersPage() {
   const { user } = useAuth();
   const isSuper = user?.role_slug === 'super_admin';
+  const isKasir = user?.role_slug === 'kasir';
   const fetcher = useCallback((p) => transferService.list(p), []);
   const t = useServerTable(fetcher);
   const [modal, setModal] = useState({ open: false, mode: 'create' });
   const [detail, setDetail] = useState(null);
   const [products, setProducts] = useState([]);
   const [lines, setLines] = useState([{ product_id: '', quantity: 1 }]);
+  const [branchOptions, setBranchOptions] = useState([]);
+  const [selectedToBranch, setSelectedToBranch] = useState(null);
+  const [kasirBranchLabel, setKasirBranchLabel] = useState('');
 
   useEffect(() => {
-    if (!modal.open) return;
+    if (!modal.open || modal.mode !== 'create') return;
+    let cancelled = false;
     (async () => {
       try {
-        const res = await productService.list({ limit: 200 });
-        if (res.success) setProducts(res.data || []);
+        const [prRes, brRes] = await Promise.all([
+          productService.list({ limit: 200 }),
+          isKasir ? Promise.resolve({ success: true, data: [] }) : branchService.list({ limit: 200 }),
+        ]);
+        if (cancelled) return;
+        if (prRes.success) setProducts(prRes.data || []);
+        if (isKasir && user?.branch_id) {
+          const kb = await branchService.list({ limit: 10 });
+          if (!cancelled && kb.success && kb.data?.[0]) {
+            const b = kb.data[0];
+            setKasirBranchLabel(`${b.code} — ${b.name}`);
+          }
+        } else if (!isKasir && brRes.success) {
+          const opts = (brRes.data || []).map((b) => ({
+            value: b.id,
+            label: `${b.code} — ${b.name}`,
+          }));
+          setBranchOptions(opts);
+          if (opts.length === 1) setSelectedToBranch(opts[0]);
+          else setSelectedToBranch(null);
+        }
       } catch {
         /* */
       }
     })();
-  }, [modal.open]);
+    return () => {
+      cancelled = true;
+    };
+  }, [modal.open, modal.mode, isKasir, user?.branch_id]);
 
   const submit = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    const to_branch_id = Number(fd.get('to_branch_id'));
+    const to_branch_id = isKasir ? Number(user?.branch_id) : Number(selectedToBranch?.value);
+    if (!isKasir && !to_branch_id) return toast.error('Pilih cabang tujuan');
     const items = lines
       .filter((l) => l.product_id && Number(l.quantity) > 0)
       .map((l) => ({ product_id: Number(l.product_id), quantity: Number(l.quantity) }));
@@ -45,6 +97,8 @@ export default function TransfersPage() {
       toast.success('Pengajuan dikirim');
       setModal({ open: false, mode: 'create' });
       setLines([{ product_id: '', quantity: 1 }]);
+      setSelectedToBranch(null);
+      setBranchOptions([]);
       t.reload();
     } catch (err) {
       toast.error(err.message);
@@ -91,12 +145,17 @@ export default function TransfersPage() {
     <div>
       <PageHeader
         title="Transfer Stok"
-        subtitle="Pusat → cabang, approval super admin"
+        subtitle={
+          isKasir
+            ? 'Ajuan minta stok ke pusat — disetujui super admin jika stok gudang mencukupi'
+            : 'Pusat → cabang, approval super admin'
+        }
         action={
           <button
             type="button"
             onClick={() => {
               setLines([{ product_id: '', quantity: 1 }]);
+              setSelectedToBranch(null);
               setModal({ open: true, mode: 'create' });
             }}
             className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white"
@@ -157,7 +216,9 @@ export default function TransfersPage() {
         {modal.mode === 'detail' && detail ? (
           <div className="space-y-2 text-sm">
             <p>Status: {detail.status}</p>
-            <p>Ke cabang ID: {detail.to_branch_id}</p>
+            <p>
+              Ke cabang: <span className="font-medium text-slate-900">{detail.to_branch_name || `ID ${detail.to_branch_id}`}</span>
+            </p>
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b">
@@ -177,10 +238,33 @@ export default function TransfersPage() {
           </div>
         ) : (
           <form onSubmit={submit} className="space-y-3">
-            <div>
-              <label className="text-xs font-medium text-slate-600">Cabang tujuan (ID)</label>
-              <input name="to_branch_id" type="number" required defaultValue={user?.branch_id || 2} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
-            </div>
+            {!isKasir ? (
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600" htmlFor="transfer-to-branch">
+                  Cabang tujuan
+                </label>
+                <Select
+                  inputId="transfer-to-branch"
+                  instanceId="transfer-to-branch"
+                  placeholder="Pilih cabang…"
+                  isSearchable
+                  options={branchOptions}
+                  value={selectedToBranch}
+                  onChange={(opt) => setSelectedToBranch(opt)}
+                  styles={branchSelectStyles}
+                  menuPortalTarget={typeof document !== 'undefined' ? document.body : null}
+                  menuPosition="fixed"
+                  noOptionsMessage={() => 'Tidak ada cabang'}
+                />
+              </div>
+            ) : (
+              <div>
+                <label className="text-xs font-medium text-slate-600">Cabang</label>
+                <p className="mt-1 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  {kasirBranchLabel || 'Cabang Anda'} (pengajuan hanya untuk cabang ini)
+                </p>
+              </div>
+            )}
             <div>
               <label className="text-xs font-medium text-slate-600">Catatan</label>
               <textarea name="notes" rows={2} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />

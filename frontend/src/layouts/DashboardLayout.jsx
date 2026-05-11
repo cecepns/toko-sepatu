@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { ROLES } from '@/utils/constants';
+import logoImg from '@/assets/logo.png';
 
 const nav = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['super_admin', 'admin_cabang', 'kasir', 'karyawan'] },
@@ -34,7 +35,7 @@ const nav = [
   { to: '/products', label: 'Produk', icon: Package, roles: ['super_admin', 'admin_cabang'] },
   { to: '/stock-central', label: 'Stok Pusat', icon: Warehouse, roles: ['super_admin', 'admin_cabang'] },
   { to: '/stock-branch', label: 'Stok Cabang', icon: Store, roles: ['super_admin', 'admin_cabang', 'kasir'] },
-  { to: '/transfers', label: 'Transfer Stok', icon: ArrowLeftRight, roles: ['super_admin', 'admin_cabang'] },
+  { to: '/transfers', label: 'Transfer Stok', icon: ArrowLeftRight, roles: ['super_admin', 'admin_cabang', 'kasir'] },
   { to: '/customers', label: 'Customer', icon: UserCircle, roles: ['super_admin', 'admin_cabang', 'kasir'] },
   { to: '/resellers', label: 'Reseller', icon: Users, roles: ['super_admin', 'admin_cabang', 'kasir'] },
   { to: '/attendance', label: 'Absensi', icon: Clock, roles: ['super_admin', 'admin_cabang', 'karyawan', 'kasir'] },
@@ -68,10 +69,9 @@ export function DashboardLayout() {
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <div className="flex h-16 items-center justify-between border-b border-slate-100 px-4">
-          <Link to="/" className="flex items-center gap-2 font-bold text-slate-900">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-600 text-white text-xs">POS</span>
-            <span className="text-sm leading-tight">Multi Cabang</span>
+        <div className="flex min-h-[4.25rem] items-center justify-between gap-2 border-b border-slate-100 px-3 py-2.5">
+          <Link to="/" className="min-w-0 flex-1" onClick={() => setOpen(false)}>
+            <img src={logoImg} alt="MAGFIRAH CELL" className="h-11 w-full max-w-[13.5rem] object-contain object-left" />
           </Link>
           <button type="button" className="rounded-lg p-2 text-slate-500 lg:hidden" onClick={() => setOpen(false)}>
             <X className="h-5 w-5" />

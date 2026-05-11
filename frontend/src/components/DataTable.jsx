@@ -14,9 +14,12 @@ export function DataTable({
   onSearchChange,
   limit,
   onLimitChange,
+  /** Sembunyikan blok cari + per halaman (mis. halaman laporan) */
+  hideControls = false,
 }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      {!hideControls && (
       <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative w-full sm:max-w-xs">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -42,6 +45,7 @@ export function DataTable({
           </select>
         </div>
       </div>
+      )}
       <div className="overflow-x-auto">
         <table className="min-w-full text-left text-sm">
           <thead className="bg-slate-50 text-slate-600">
