@@ -108,6 +108,7 @@ export default function PosPage() {
         tax_percent: Number(cart.taxPercent) || 0,
         notes: cart.notes || '',
         payment_method: 'cash',
+        wallet_channel: cart.walletChannel || null,
       };
       const res = await saleService.create(body);
       if (!res.success) throw new Error(res.message);
@@ -212,6 +213,19 @@ export default function PosPage() {
                   className="mt-1 w-full rounded-xl border border-slate-200 px-2 py-2 text-sm"
                 />
               </div>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500">Saldo aplikasi (top-up / non tunai)</label>
+              <select
+                value={cart.walletChannel || ''}
+                onChange={(e) => cart.setMeta({ walletChannel: e.target.value })}
+                className="mt-1 w-full rounded-xl border border-slate-200 px-2 py-2 text-sm"
+              >
+                <option value="">— Tunai / tidak pakai kanal —</option>
+                <option value="simpel">Simpel</option>
+                <option value="digipos">Digipos</option>
+                <option value="bonafit">Bonafit</option>
+              </select>
             </div>
             <div>
               <label className="text-xs text-slate-500">Catatan</label>

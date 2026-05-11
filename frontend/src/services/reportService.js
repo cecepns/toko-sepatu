@@ -6,4 +6,6 @@ export const reportService = {
   stock: (params) => api.get('/api/reports/stock', { params }).then((r) => r.data),
   bestsellers: (params) => api.get('/api/reports/bestsellers', { params }).then((r) => r.data),
   attendance: (params) => api.get('/api/reports/attendance', { params }).then((r) => r.data),
+  dailyShift: (params) => api.get('/api/reports/daily-shift', { params }).then((r) => r.data),
+  saveWalletSnapshot: (body) => api.put('/api/wallet-snapshots', body).then((r) => r.data),
 };

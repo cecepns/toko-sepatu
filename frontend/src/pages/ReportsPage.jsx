@@ -3,6 +3,7 @@ import toast from 'react-hot-toast';
 import { FileSpreadsheet, FileText } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
+import { DailyShiftReport } from '@/components/DailyShiftReport';
 import { reportService } from '@/services/reportService';
 import { formatCurrency, formatExportDate, formatReportPeriod } from '@/utils/format';
 import * as XLSX from 'xlsx';
@@ -11,6 +12,7 @@ import autoTable from 'jspdf-autotable';
 
 const tabs = [
   { id: 'sales', label: 'Penjualan agregat' },
+  { id: 'daily', label: 'Harian operator' },
   { id: 'pl', label: 'Laba rugi (per trx)' },
   { id: 'stock', label: 'Stok' },
   { id: 'bestsellers', label: 'Produk terlaris' },
@@ -118,6 +120,7 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(false);
 
   const load = async () => {
+    if (tab === 'daily') return;
     setLoading(true);
     try {
       let res;
@@ -201,7 +204,14 @@ export default function ReportsPage() {
 
   return (
     <div>
-      <PageHeader title="Laporan" subtitle="Tabel ringkas — export PDF & Excel" />
+      <PageHeader
+        title="Laporan"
+        subtitle={
+          tab === 'daily'
+            ? 'Grosir + saldo Simpel / Digipos / Bonafit (isi saldo & pilih kanal di POS)'
+            : 'Tabel ringkas — export PDF & Excel'
+        }
+      />
       <div className="mb-4 flex flex-wrap gap-2">
         {tabs.map((x) => (
           <button
@@ -228,32 +238,38 @@ export default function ReportsPage() {
           ))}
         </div>
       )}
-      <div className="mb-4 flex flex-wrap gap-2">
-        <button type="button" onClick={load} className="rounded-xl border border-slate-200 px-4 py-2 text-sm">
-          Refresh
-        </button>
-        <button type="button" onClick={exportExcel} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">
-          <FileSpreadsheet className="h-4 w-4" /> Excel
-        </button>
-        <button type="button" onClick={exportPdf} className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white">
-          <FileText className="h-4 w-4" /> PDF
-        </button>
-      </div>
+      {tab !== 'daily' && (
+        <div className="mb-4 flex flex-wrap gap-2">
+          <button type="button" onClick={load} className="rounded-xl border border-slate-200 px-4 py-2 text-sm">
+            Refresh
+          </button>
+          <button type="button" onClick={exportExcel} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">
+            <FileSpreadsheet className="h-4 w-4" /> Excel
+          </button>
+          <button type="button" onClick={exportPdf} className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white">
+            <FileText className="h-4 w-4" /> PDF
+          </button>
+        </div>
+      )}
 
-      <DataTable
-        hideControls
-        columns={columns}
-        rows={rows.slice(0, 100)}
-        loading={loading}
-        emptyText="Tidak ada data"
-        search=""
-        onSearchChange={noop}
-        sortKey=""
-        sortOrder="desc"
-        onSort={noop}
-        limit={10}
-        onLimitChange={noop}
-      />
+      {tab === 'daily' ? (
+        <DailyShiftReport />
+      ) : (
+        <DataTable
+          hideControls
+          columns={columns}
+          rows={rows.slice(0, 100)}
+          loading={loading}
+          emptyText="Tidak ada data"
+          search=""
+          onSearchChange={noop}
+          sortKey=""
+          sortOrder="desc"
+          onSort={noop}
+          limit={10}
+          onLimitChange={noop}
+        />
+      )}
     </div>
   );
 }

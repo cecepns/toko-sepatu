@@ -65,7 +65,7 @@ export default function ResellersPage() {
     <div>
       <PageHeader
         title="Reseller"
-        subtitle="Harga grosir hanya untuk akun reseller di POS"
+        subtitle="Nama perusahaan, kontak & alamat (dari data customer terkait)"
         action={
           <button
             type="button"
@@ -78,10 +78,9 @@ export default function ResellersPage() {
       />
       <DataTable
         columns={[
-          { key: 'company_name', label: 'Perusahaan', sortable: true },
-          { key: 'customer_name', label: 'Customer' },
-          { key: 'phone', label: 'Telepon' },
-          { key: 'is_active', label: 'Aktif', render: (r) => (r.is_active ? 'Ya' : 'Tidak') },
+          { key: 'company_name', label: 'Nama perusahaan', sortable: true },
+          { key: 'phone', label: 'No. HP', render: (r) => r.phone || '—' },
+          { key: 'address', label: 'Alamat', wrap: true, render: (r) => r.address || '—' },
           {
             key: 'a',
             label: '',

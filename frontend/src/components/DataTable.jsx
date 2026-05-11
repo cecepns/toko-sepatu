@@ -81,7 +81,10 @@ export function DataTable({
               rows.map((row, idx) => (
                 <tr key={row.id ?? idx} className="hover:bg-slate-50/80">
                   {columns.map((c) => (
-                    <td key={c.key} className="px-4 py-3 align-middle text-slate-800 whitespace-nowrap">
+                    <td
+                      key={c.key}
+                      className={`px-4 py-3 align-middle text-slate-800 ${c.wrap ? 'max-w-xs whitespace-normal break-words' : 'whitespace-nowrap'}`}
+                    >
                       {c.render ? c.render(row) : row[c.key]}
                     </td>
                   ))}
