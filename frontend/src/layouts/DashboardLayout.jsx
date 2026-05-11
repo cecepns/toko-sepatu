@@ -64,7 +64,7 @@ export function DashboardLayout() {
   return (
     <div className="min-h-screen bg-slate-50">
       <aside
-        className={`fixed inset-y-0 left-0 z-40 w-64 transform border-r border-slate-200 bg-white transition-transform duration-200 lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 flex h-screen w-64 flex-col transform border-r border-slate-200 bg-white transition-transform duration-200 lg:translate-x-0 ${
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -77,7 +77,7 @@ export function DashboardLayout() {
             <X className="h-5 w-5" />
           </button>
         </div>
-        <nav className="scrollbar-thin max-h-[calc(100vh-8rem)] space-y-1 overflow-y-auto p-3">
+        <nav className="scrollbar-thin min-h-0 flex-1 space-y-1 overflow-y-auto p-3">
           {items.map((item) => (
             <NavLink key={item.to} to={item.to} className={linkClass} onClick={() => setOpen(false)} end={item.to === '/'}>
               <item.icon className="h-5 w-5 shrink-0" />
@@ -85,7 +85,7 @@ export function DashboardLayout() {
             </NavLink>
           ))}
         </nav>
-        <div className="absolute bottom-0 left-0 right-0 border-t border-slate-100 bg-white p-3">
+        <div className="border-t border-slate-100 bg-white p-3">
           <div className="mb-2 truncate rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
             <div className="font-semibold text-slate-900">{user?.full_name}</div>
             <div>{user?.role_name}</div>
