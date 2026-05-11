@@ -37,7 +37,7 @@ const nav = [
   { to: '/transfers', label: 'Transfer Stok', icon: ArrowLeftRight, roles: ['super_admin', 'admin_cabang'] },
   { to: '/customers', label: 'Customer', icon: UserCircle, roles: ['super_admin', 'admin_cabang', 'kasir'] },
   { to: '/resellers', label: 'Reseller', icon: Users, roles: ['super_admin', 'admin_cabang', 'kasir'] },
-  { to: '/attendance', label: 'Absensi', icon: Clock, roles: ['super_admin', 'admin_cabang', 'karyawan'] },
+  { to: '/attendance', label: 'Absensi', icon: Clock, roles: ['super_admin', 'admin_cabang', 'karyawan', 'kasir'] },
   { to: '/reports', label: 'Laporan', icon: BarChart3, roles: ['super_admin', 'admin_cabang'] },
 ];
 

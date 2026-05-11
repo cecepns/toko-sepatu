@@ -12,7 +12,7 @@ import { confirmToast } from '@/utils/confirm';
 
 export default function ResellersPage() {
   const { user } = useAuth();
-  const canEdit = user?.role_slug !== 'kasir';
+  const canEditRow = user?.role_slug !== 'kasir';
   const fetcher = useCallback((p) => resellerService.list(p), []);
   const t = useServerTable(fetcher);
   const [modal, setModal] = useState({ open: false, row: null });
@@ -67,11 +67,13 @@ export default function ResellersPage() {
         title="Reseller"
         subtitle="Harga grosir hanya untuk akun reseller di POS"
         action={
-          canEdit && (
-            <button type="button" onClick={() => setModal({ open: true, row: null })} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white">
-              <Plus className="h-4 w-4" /> Tambah
-            </button>
-          )
+          <button
+            type="button"
+            onClick={() => setModal({ open: true, row: null })}
+            className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-brand-600/25 hover:bg-brand-700"
+          >
+            <Plus className="h-4 w-4" /> Tambah
+          </button>
         }
       />
       <DataTable
@@ -84,7 +86,7 @@ export default function ResellersPage() {
             key: 'a',
             label: '',
             render: (row) =>
-              canEdit ? (
+              canEditRow ? (
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setModal({ open: true, row })} className="text-brand-600">
                     <Pencil className="h-4 w-4" />

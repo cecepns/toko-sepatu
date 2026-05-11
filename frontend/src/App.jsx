@@ -45,7 +45,7 @@ export default function App() {
         <Route path="transfers" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><TransfersPage /></ProtectedRoute>} />
         <Route path="customers" element={<ProtectedRoute roles={['super_admin', 'admin_cabang', 'kasir']}><CustomersPage /></ProtectedRoute>} />
         <Route path="resellers" element={<ProtectedRoute roles={['super_admin', 'admin_cabang', 'kasir']}><ResellersPage /></ProtectedRoute>} />
-        <Route path="attendance" element={<ProtectedRoute roles={['super_admin', 'admin_cabang', 'karyawan']}><AttendancePage /></ProtectedRoute>} />
+        <Route path="attendance" element={<ProtectedRoute roles={['super_admin', 'admin_cabang', 'karyawan', 'kasir']}><AttendancePage /></ProtectedRoute>} />
         <Route path="reports" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><ReportsPage /></ProtectedRoute>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

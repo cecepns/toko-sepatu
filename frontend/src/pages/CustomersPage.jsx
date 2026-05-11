@@ -23,8 +23,6 @@ export default function CustomersPage() {
       name: fd.get('name'),
       phone: fd.get('phone'),
       address: fd.get('address'),
-      tier: fd.get('tier'),
-      points: Number(fd.get('points') || 0),
       is_active: fd.get('is_active') === '1',
     };
     try {
@@ -53,7 +51,7 @@ export default function CustomersPage() {
     <div>
       <PageHeader
         title="Customer"
-        subtitle="Membership & riwayat transaksi (via penjualan)"
+        subtitle="Data pelanggan"
         action={
           canEdit && (
             <button type="button" onClick={() => setModal({ open: true, row: null })} className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white">
@@ -67,8 +65,6 @@ export default function CustomersPage() {
           { key: 'code', label: 'Kode', sortable: true },
           { key: 'name', label: 'Nama', sortable: true },
           { key: 'phone', label: 'Telepon' },
-          { key: 'tier', label: 'Tier' },
-          { key: 'points', label: 'Poin' },
           {
             key: 'a',
             label: '',
@@ -111,27 +107,13 @@ export default function CustomersPage() {
             <textarea name="address" rows={2} defaultValue={modal.row?.address} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
           </div>
           {modal.row && (
-            <>
-              <div>
-                <label className="text-xs font-medium text-slate-600">Tier</label>
-                <select name="tier" defaultValue={modal.row?.tier || 'bronze'} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
-                  <option value="bronze">Bronze</option>
-                  <option value="silver">Silver</option>
-                  <option value="gold">Gold</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-600">Poin</label>
-                <input name="points" type="number" defaultValue={modal.row?.points ?? 0} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-600">Aktif</label>
-                <select name="is_active" defaultValue={modal.row?.is_active === 0 ? '0' : '1'} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
-                  <option value="1">Ya</option>
-                  <option value="0">Tidak</option>
-                </select>
-              </div>
-            </>
+            <div>
+              <label className="text-xs font-medium text-slate-600">Aktif</label>
+              <select name="is_active" defaultValue={modal.row?.is_active === 0 ? '0' : '1'} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+                <option value="1">Ya</option>
+                <option value="0">Tidak</option>
+              </select>
+            </div>
           )}
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={() => setModal({ open: false, row: null })} className="rounded-xl border border-slate-200 px-4 py-2 text-sm">

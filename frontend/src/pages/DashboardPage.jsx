@@ -6,6 +6,14 @@ import { dashboardService } from '@/services/dashboardService';
 import { formatCurrency } from '@/utils/format';
 import toast from 'react-hot-toast';
 
+function chartLabel(row, staffToday) {
+  if (staffToday && row.h != null) {
+    const h = Number(row.h);
+    return `${String(Number.isFinite(h) ? h : 0).padStart(2, '0')}:00`;
+  }
+  return row.d;
+}
+
 export default function DashboardPage() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -37,33 +45,41 @@ export default function DashboardPage() {
     );
   }
 
+  const staffToday = data?.scope === 'staff_today';
   const s = data?.sales_30d;
   const chart = (data?.chart_sales || []).map((r) => ({
-    name: r.d,
+    name: chartLabel(r, staffToday),
     total: Number(r.total) || 0,
   }));
 
+  const subtitle = staffToday ? 'Transaksi & penjualan hari ini (cabang Anda)' : 'Ringkasan performa & stok';
+  const trxLabel = staffToday ? 'Transaksi hari ini' : 'Transaksi (30 hari)';
+  const revLabel = staffToday ? 'Pendapatan hari ini' : 'Pendapatan (30 hari)';
+  const topProdLabel = staffToday ? 'Produk terlaris (hari ini)' : 'Produk terlaris';
+  const branchLabel = staffToday ? 'Cabang Anda (hari ini)' : 'Cabang terbaik';
+  const chartTitle = staffToday ? 'Penjualan hari ini (per jam)' : 'Grafik penjualan (14 hari)';
+
   return (
     <div>
-      <PageHeader title="Dashboard" subtitle="Ringkasan performa & stok" />
+      <PageHeader title="Dashboard" subtitle={subtitle} />
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-slate-500">Transaksi (30 hari)</p>
+            <p className="text-sm font-medium text-slate-500">{trxLabel}</p>
             <TrendingUp className="h-5 w-5 text-emerald-500" />
           </div>
           <p className="mt-3 text-3xl font-bold text-slate-900">{s?.cnt ?? 0}</p>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-slate-500">Pendapatan (30 hari)</p>
+            <p className="text-sm font-medium text-slate-500">{revLabel}</p>
             <Wallet className="h-5 w-5 text-brand-600" />
           </div>
           <p className="mt-3 text-2xl font-bold text-slate-900">{formatCurrency(s?.revenue)}</p>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-slate-500">Produk terlaris</p>
+            <p className="text-sm font-medium text-slate-500">{topProdLabel}</p>
             <Package className="h-5 w-5 text-amber-500" />
           </div>
           <ul className="mt-3 space-y-1 text-sm text-slate-700">
@@ -78,7 +94,7 @@ export default function DashboardPage() {
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-slate-500">Cabang terbaik</p>
+            <p className="text-sm font-medium text-slate-500">{branchLabel}</p>
             <Building2 className="h-5 w-5 text-indigo-500" />
           </div>
           <ul className="mt-3 space-y-1 text-sm text-slate-700">
@@ -94,7 +110,7 @@ export default function DashboardPage() {
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="mb-4 text-sm font-semibold text-slate-800">Grafik penjualan (14 hari)</h3>
+          <h3 className="mb-4 text-sm font-semibold text-slate-800">{chartTitle}</h3>
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chart}>
