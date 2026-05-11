@@ -404,7 +404,7 @@ export function DailyShiftReport() {
                   {canEditManual && (
                     <div className="mt-4 rounded-xl border border-dashed border-emerald-200 bg-emerald-50/50 p-3">
                       <p className="text-xs font-semibold text-emerald-900">Saldo masuk (top-up)</p>
-                      <p className="mt-0.5 text-[11px] text-emerald-800/90">Nominal yang masuk ke saldo aplikasi (TF/isisi). Bukan penjualan & tidak mengurangi stok.</p>
+                      <p className="mt-0.5 text-[11px] text-emerald-800/90">Nominal yang masuk ke saldo aplikasi (TF/isi). Bukan penjualan & tidak mengurangi stok.</p>
                       <div className="mt-2 grid gap-2 sm:grid-cols-2">
                         <input
                           type="number"
