@@ -559,22 +559,40 @@ app.get('/api/products', authMiddleware, async (req, res) => {
   try {
     const { page, limit, offset, search, sort, order } = parsePagination(req.query);
     let where = ' WHERE 1=1 ';
-    const params = {};
+    const params = { limit, offset };
     if (search) {
       where += ' AND (p.name LIKE :s OR p.sku LIKE :s OR p.barcode LIKE :s) ';
       params.s = `%${search}%`;
+    }
+    let stockJoin = '';
+    let stockSelect = '';
+    let bid = null;
+    if (req.query.branch_id != null && req.query.branch_id !== '') {
+      const n = Number(req.query.branch_id);
+      if (!Number.isNaN(n) && n > 0) {
+        if (req.user.role_slug === 'super_admin') bid = n;
+        else if (Number(req.user.branch_id) === n) bid = n;
+        else return fail(res, 403, 'Cabang tidak sesuai');
+      }
+    }
+    if (bid != null) {
+      stockJoin = ' LEFT JOIN stock_branch sb ON sb.product_id = p.id AND sb.branch_id = :bid ';
+      stockSelect = ', COALESCE(sb.quantity, 0) AS branch_stock ';
+      params.bid = bid;
     }
     const sortCol = ['id', 'name', 'sku', 'retail_price', 'created_at'].includes(sort) ? `p.${sort}` : 'p.id';
     const [rows] = await pool.query(
       `SELECT SQL_CALC_FOUND_ROWS p.*, c.name AS category_name, u.abbreviation AS unit_abbr,
               ROUND((p.retail_price - p.hpp) / NULLIF(p.hpp,0) * 100, 2) AS margin_percent
+              ${stockSelect}
        FROM products p
        JOIN categories c ON c.id = p.category_id
        JOIN units u ON u.id = p.unit_id
+       ${stockJoin}
        ${where}
        ORDER BY ${sortCol} ${order}
        LIMIT :limit OFFSET :offset`,
-      { ...params, limit, offset }
+      params
     );
     const [[{ total }]] = await pool.query('SELECT FOUND_ROWS() as total');
     return ok(res, rows, '', { page, limit, total, totalPages: Math.ceil(total / limit) || 1 });

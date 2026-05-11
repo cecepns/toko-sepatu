@@ -36,13 +36,15 @@ export default function PosPage() {
     }
   }, [user?.branch_id]);
 
-  const search = useCallback(async (term) => {
-    if (!term.trim()) {
-      setHits([]);
-      return;
-    }
+  const effectiveBranchId = user?.branch_id || Number(branchId) || 0;
+
+  const search = useCallback(async (term, bid) => {
     try {
-      const res = await productService.list({ search: term, limit: 8, page: 1, sort: 'name', order: 'asc' });
+      const params = { limit: 10, page: 1, sort: 'name', order: 'asc' };
+      if (bid > 0) params.branch_id = bid;
+      const t = term.trim();
+      if (t) params.search = t;
+      const res = await productService.list(params);
       if (res.success) setHits(res.data || []);
     } catch {
       setHits([]);
@@ -50,9 +52,9 @@ export default function PosPage() {
   }, []);
 
   useEffect(() => {
-    const t = setTimeout(() => search(q), 300);
+    const t = setTimeout(() => search(q, effectiveBranchId), 300);
     return () => clearTimeout(t);
-  }, [q, search]);
+  }, [q, search, effectiveBranchId]);
 
   useEffect(() => {
     (async () => {
@@ -68,10 +70,14 @@ export default function PosPage() {
   const addByBarcode = async () => {
     const code = barcode.trim();
     if (!code) return;
+    const bid = user?.branch_id || Number(branchId);
+    if (!bid) return toast.error('Pilih cabang penjualan dulu');
     try {
-      const res = await productService.list({ search: code, limit: 5, page: 1 });
+      const res = await productService.list({ search: code, limit: 5, page: 1, branch_id: bid });
       const row = (res.data || []).find((p) => p.barcode === code) || res.data?.[0];
       if (!row) return toast.error('Produk tidak ditemukan');
+      const stock = Number(row.branch_stock ?? 0);
+      if (stock < 1) return toast.error('Stok cabang kosong');
       cart.addItem(row, 1);
       setBarcode('');
       toast.success(`${row.name} ditambahkan`);
@@ -158,17 +164,42 @@ export default function PosPage() {
             <label className="text-sm font-medium text-slate-700">Cari produk</label>
             <input value={q} onChange={(e) => setQ(e.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Nama / SKU" />
             <ul className="mt-3 max-h-64 divide-y divide-slate-100 overflow-y-auto text-sm">
-              {hits.map((p) => (
-                <li key={p.id} className="flex items-center justify-between py-2">
-                  <div>
-                    <div className="font-medium text-slate-900">{p.name}</div>
-                    <div className="text-xs text-slate-500">{p.sku}</div>
-                  </div>
-                  <button type="button" className="text-brand-600 text-xs font-semibold" onClick={() => cart.addItem(p, 1)}>
-                    +1
-                  </button>
-                </li>
-              ))}
+              {hits.map((p) => {
+                const stock = Number(p.branch_stock ?? 0);
+                const noBranch = !effectiveBranchId;
+                const outOfStock = effectiveBranchId > 0 && stock < 1;
+                const disabled = noBranch || outOfStock;
+                return (
+                  <li key={p.id}>
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => {
+                        if (disabled) return;
+                        cart.addItem(p, 1);
+                      }}
+                      className={`flex w-full items-center justify-between gap-3 py-3 pl-1 pr-2 text-left sm:pl-2 ${
+                        disabled ? 'cursor-not-allowed opacity-55' : 'cursor-pointer hover:bg-slate-50 active:bg-slate-100'
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium text-slate-900">{p.name}</div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
+                          <span>{p.sku}</span>
+                          {effectiveBranchId > 0 ? (
+                            <span className={outOfStock ? 'font-medium text-amber-800' : 'text-slate-600'}>
+                              Stok: {outOfStock ? 'kosong' : stock}
+                            </span>
+                          ) : (
+                            <span className="text-amber-800">Pilih cabang</span>
+                          )}
+                        </div>
+                      </div>
+                      {!disabled ? <span className="shrink-0 text-xs font-semibold text-brand-600">+1</span> : null}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         </div>
