@@ -34,10 +34,10 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-brand-900 p-4">
       <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/95 p-8 shadow-2xl backdrop-blur">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-5 flex justify-center px-5 py-4 shadow-lg ring-1 ring-white/10">
+          <div className="mx-auto mb-5 flex justify-center px-5 py-4 ring-1 ring-white/10">
             <img src={logoImg} alt="MAGFIRAH CELL" className="h-12 w-auto max-w-[min(100%,280px)] object-contain sm:h-14" />
           </div>
-          <h1 className="text-xl font-bold text-slate-900">POS Multi Cabang</h1>
+          {/* <h1 className="text-xl font-bold text-slate-900">POS Multi Cabang</h1> */}
           <p className="mt-1 text-sm text-slate-600">Masuk dengan akun Anda</p>
         </div>
         <form onSubmit={onSubmit} className="space-y-4">
@@ -70,7 +70,7 @@ export default function LoginPage() {
             Masuk
           </button>
         </form>
-        <p className="mt-6 text-center text-xs text-slate-500">Default: superadmin@pos.local / Admin123!</p>
+        {/* <p className="mt-6 text-center text-xs text-slate-500">Default: superadmin@pos.local / Admin123!</p> */}
       </div>
     </div>
   );

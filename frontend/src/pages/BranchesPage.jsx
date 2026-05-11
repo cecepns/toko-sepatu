@@ -1,6 +1,6 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Plus, Pencil } from 'lucide-react';
+import { MapPin, Pencil, Plus } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
 import { Modal } from '@/components/Modal';
@@ -14,6 +14,39 @@ export default function BranchesPage() {
   const fetcher = useCallback((p) => branchService.list(p), []);
   const t = useServerTable(fetcher);
   const [modal, setModal] = useState({ open: false, row: null });
+  const [gpsLoading, setGpsLoading] = useState(false);
+  const latInputRef = useRef(null);
+  const lngInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!modal.open) setGpsLoading(false);
+  }, [modal.open]);
+
+  const fillCoordinatesFromGps = () => {
+    if (!navigator.geolocation) {
+      toast.error('Browser tidak mendukung GPS / lokasi');
+      return;
+    }
+    setGpsLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        if (latInputRef.current) latInputRef.current.value = String(lat);
+        if (lngInputRef.current) lngInputRef.current.value = String(lng);
+        setGpsLoading(false);
+        toast.success('Koordinat dari GPS sudah diisi');
+      },
+      (err) => {
+        setGpsLoading(false);
+        const code = err?.code;
+        const msg =
+          code === 1 ? 'Izin lokasi ditolak — aktifkan di pengaturan browser' : code === 2 ? 'Lokasi tidak tersedia' : code === 3 ? 'Timeout GPS' : 'Gagal mengambil lokasi';
+        toast.error(msg);
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+    );
+  };
 
   const save = async (e) => {
     e.preventDefault();
@@ -84,7 +117,7 @@ export default function BranchesPage() {
       />
 
       <Modal open={modal.open} title={modal.row ? 'Edit Cabang' : 'Tambah Cabang'} onClose={() => setModal({ open: false, row: null })} size="lg">
-        <form onSubmit={save} className="grid gap-3 sm:grid-cols-2">
+        <form key={modal.row?.id ?? 'new-branch'} onSubmit={save} className="grid gap-3 sm:grid-cols-2">
           <input type="hidden" name="id" defaultValue={modal.row?.id} />
           <div>
             <label className="text-xs font-medium text-slate-600">Kode</label>
@@ -102,13 +135,43 @@ export default function BranchesPage() {
             <label className="text-xs font-medium text-slate-600">Alamat</label>
             <textarea name="address" required rows={2} defaultValue={modal.row?.address} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
           </div>
-          <div>
-            <label className="text-xs font-medium text-slate-600">Latitude</label>
-            <input name="latitude" type="number" step="any" required defaultValue={modal.row?.latitude} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-slate-600">Longitude</label>
-            <input name="longitude" type="number" step="any" required defaultValue={modal.row?.longitude} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          <div className="sm:col-span-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
+              <div className="min-w-0 flex-1">
+                <label className="text-xs font-medium text-slate-600">Latitude</label>
+                <input
+                  ref={latInputRef}
+                  name="latitude"
+                  type="number"
+                  step="any"
+                  required
+                  defaultValue={modal.row?.latitude ?? ''}
+                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <label className="text-xs font-medium text-slate-600">Longitude</label>
+                <input
+                  ref={lngInputRef}
+                  name="longitude"
+                  type="number"
+                  step="any"
+                  required
+                  defaultValue={modal.row?.longitude ?? ''}
+                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={fillCoordinatesFromGps}
+                disabled={gpsLoading}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-60 sm:mb-0.5"
+              >
+                <MapPin className="h-4 w-4 text-brand-600" />
+                {gpsLoading ? 'Mencari GPS…' : 'Isi dari GPS'}
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] text-slate-500">Buka form ini di lokasi cabang, lalu izinkan akses lokasi di browser.</p>
           </div>
           <div>
             <label className="text-xs font-medium text-slate-600">Radius absensi (m)</label>
