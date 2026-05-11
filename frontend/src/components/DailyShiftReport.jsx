@@ -77,6 +77,12 @@ const emptyManual = () => ({
   bonafit: { phone: '', desc: '', cost: '', sale: '' },
 });
 
+const emptyTopup = () => ({
+  simpel: { amount: '', notes: '' },
+  digipos: { amount: '', notes: '' },
+  bonafit: { amount: '', notes: '' },
+});
+
 export function DailyShiftReport() {
   const { user } = useAuth();
   const canEditSnap = user?.role_slug === 'super_admin' || user?.role_slug === 'admin_cabang';
@@ -92,6 +98,7 @@ export function DailyShiftReport() {
     bonafit: { opening: '', closing: '', notes: '' },
   });
   const [manualForm, setManualForm] = useState(emptyManual);
+  const [topupForm, setTopupForm] = useState(emptyTopup);
 
   useEffect(() => {
     if (user?.role_slug !== 'super_admin' || user?.branch_id) return;
@@ -204,6 +211,43 @@ export function DailyShiftReport() {
     }
   };
 
+  const addTopupLine = async (slug) => {
+    if (!canEditManual || !effectiveBranch) return;
+    const f = topupForm[slug];
+    const amt = f.amount === '' ? NaN : Number(f.amount);
+    if (Number.isNaN(amt) || amt <= 0) {
+      toast.error('Isi nominal saldo masuk (lebih dari 0)');
+      return;
+    }
+    try {
+      const res = await reportService.addWalletTopup({
+        branch_id: effectiveBranch,
+        topup_date: date,
+        channel: slug,
+        amount: amt,
+        notes: (f.notes || '').trim() || null,
+      });
+      if (!res.success) throw new Error(res.message);
+      toast.success(res.message || 'Saldo masuk tercatat');
+      setTopupForm((s) => ({ ...s, [slug]: { amount: '', notes: '' } }));
+      load();
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
+
+  const deleteTopupLine = async (id) => {
+    if (!canEditManual) return;
+    try {
+      const res = await reportService.deleteWalletTopup(id);
+      if (!res.success) throw new Error(res.message);
+      toast.success(res.message || 'Dihapus');
+      load();
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
+
   const grosir = data?.grosir || [];
   const grosirTotal = data?.grosir_total ?? 0;
 
@@ -214,7 +258,10 @@ export function DailyShiftReport() {
         <ul className="mt-2 list-inside list-disc space-y-1 text-sky-900/90">
           <li>Di <strong>POS</strong>, pilih <strong>Saldo aplikasi</strong> saat bayar bila transaksi memotong saldo aplikasi tersebut (bukan tunai murni).</li>
           <li>
-            Untuk produk yang <strong>tidak ada di master</strong> (pulsa/PLN/kode beda tiap hari), gunakan form <strong>Input manual</strong> per kanal: keterangan bebas, <strong>modal</strong> (estimasi potong saldo), dan <strong>harga jual</strong>.
+            Untuk produk yang <strong>tidak ada di master</strong> (pulsa/PLN/kode beda tiap hari), gunakan form <strong>Input manual</strong> per kanal: keterangan bebas, <strong>modal</strong> (estimasi potong saldo), dan <strong>harga jual</strong>. Form yang sama juga tersedia di <strong>POS</strong> setelah memilih Saldo aplikasi (Simpel/Digipos/Bonafit).
+          </li>
+          <li>
+            <strong>Saldo masuk</strong> (top-up/transfer ke aplikasi) dicatat per kanal di bawah — menambah saldo tanpa lewat master produk; tampil di ringkasan & POS.
           </li>
           <li>Isi <strong>saldo awal / saldo akhir</strong> harian per kanal di bawah (rekonsiliasi dengan aplikasi asli — sistem tidak mengambil saldo langsung dari Digipos/Bonafit kecuali nanti ada integrasi API).</li>
           <li>Laporan <strong>GROSIR</strong> mengambil baris penjualan dengan konteks reseller (sesuai lembar grosir Anda).</li>
@@ -258,7 +305,13 @@ export function DailyShiftReport() {
 
           <div className="grid gap-4 lg:grid-cols-3">
             {CHANNELS.map(({ slug, label }) => {
-              const ch = data.channels?.[slug] || { lines: [], total_jual: 0 };
+              const ch = data.channels?.[slug] || {
+                lines: [],
+                total_jual: 0,
+                total_modal: 0,
+                topups: [],
+                total_topup: 0,
+              };
               const f = snapForm[slug] || { opening: '', closing: '', notes: '' };
               return (
                 <section key={slug} className="flex flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -348,9 +401,70 @@ export function DailyShiftReport() {
                       </button>
                     </div>
                   )}
+                  {canEditManual && (
+                    <div className="mt-4 rounded-xl border border-dashed border-emerald-200 bg-emerald-50/50 p-3">
+                      <p className="text-xs font-semibold text-emerald-900">Saldo masuk (top-up)</p>
+                      <p className="mt-0.5 text-[11px] text-emerald-800/90">Nominal yang masuk ke saldo aplikasi (TF/isisi). Bukan penjualan & tidak mengurangi stok.</p>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        <input
+                          type="number"
+                          min={1}
+                          step="1"
+                          placeholder="Nominal"
+                          value={topupForm[slug]?.amount ?? ''}
+                          onChange={(e) => setTopupForm((s) => ({ ...s, [slug]: { ...s[slug], amount: e.target.value } }))}
+                          className="rounded-lg border border-emerald-200 bg-white px-2 py-1.5 text-sm"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Keterangan (opsional)"
+                          value={topupForm[slug]?.notes ?? ''}
+                          onChange={(e) => setTopupForm((s) => ({ ...s, [slug]: { ...s[slug], notes: e.target.value } }))}
+                          className="rounded-lg border border-emerald-200 bg-white px-2 py-1.5 text-sm"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => addTopupLine(slug)}
+                        className="mt-2 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-900 hover:bg-emerald-50"
+                      >
+                        Catat saldo masuk
+                      </button>
+                      {(ch.topups || []).length > 0 ? (
+                        <ul className="mt-2 max-h-28 space-y-1 overflow-y-auto text-[11px]">
+                          {(ch.topups || []).map((t) => (
+                            <li key={t.id} className="flex items-center justify-between gap-2 rounded border border-emerald-100 bg-white px-2 py-1">
+                              <span className="min-w-0 truncate text-slate-700">{t.notes || '—'}</span>
+                              <span className="shrink-0 font-medium tabular-nums">{formatCurrency(Number(t.amount))}</span>
+                              <button type="button" onClick={() => deleteTopupLine(t.id)} className="shrink-0 text-red-600 hover:underline">
+                                Hapus
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+                  )}
+                  {!canEditManual && (ch.topups || []).length > 0 ? (
+                    <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/40 p-3 text-xs">
+                      <p className="font-semibold text-emerald-900">Saldo masuk hari ini</p>
+                      <ul className="mt-2 space-y-1">
+                        {(ch.topups || []).map((t) => (
+                          <li key={t.id} className="flex justify-between gap-2 text-slate-700">
+                            <span className="min-w-0 truncate">{t.notes || '—'}</span>
+                            <span className="shrink-0 font-medium">{formatCurrency(Number(t.amount))}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                   <div className="mt-4 min-h-0 flex-1">
                     <LineTable rows={ch.lines} showPhone onDeleteManual={canEditManual ? deleteManualLine : undefined} />
                     <div className="mt-2 flex flex-col items-end gap-0.5 text-xs">
+                      <div>
+                        <span className="text-slate-500">Total saldo masuk</span>
+                        <span className="ml-2 font-semibold text-emerald-800">{formatCurrency(ch.total_topup ?? 0)}</span>
+                      </div>
                       <div>
                         <span className="text-slate-500">Total modal (estimasi)</span>
                         <span className="ml-2 font-semibold text-slate-800">{formatCurrency(ch.total_modal ?? 0)}</span>
@@ -374,6 +488,7 @@ export function DailyShiftReport() {
                 <li key={slug}>
                   Total {label}: {formatCurrency(data.channels?.[slug]?.total_jual ?? 0)}
                   <span className="text-slate-500"> — modal estimasi {formatCurrency(data.channels?.[slug]?.total_modal ?? 0)}</span>
+                  <span className="text-emerald-800"> — saldo masuk {formatCurrency(data.channels?.[slug]?.total_topup ?? 0)}</span>
                 </li>
               ))}
             </ul>

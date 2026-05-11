@@ -1626,10 +1626,17 @@ app.get('/api/reports/daily-shift', authMiddleware, requireRoles('super_admin', 
       const posModal = lines.reduce((acc, row) => acc + Number(row.hpp || 0) * Number(row.quantity || 0), 0);
       const manJual = manualLines.reduce((a, row) => a + Number(row.line_subtotal || 0), 0);
       const manModal = manualLines.reduce((a, row) => a + Number(row.hpp || 0) * Number(row.quantity || 0), 0);
+      const [topupRows] = await pool.query(
+        `SELECT id, amount, notes, created_at FROM wallet_topup_lines WHERE branch_id = :bid AND topup_date = :d AND channel = :ch ORDER BY id`,
+        { ...base, ch }
+      );
+      const total_topup = topupRows.reduce((a, r) => a + Number(r.amount || 0), 0);
       channels[ch] = {
         lines: [...posLines, ...manualLines],
         total_jual: posJual + manJual,
         total_modal: posModal + manModal,
+        topups: topupRows,
+        total_topup,
       };
     }
 
@@ -1688,6 +1695,36 @@ function resolveBranchIdForWallet(req, bodyBranchId) {
   return bid;
 }
 
+function resolveBranchIdForWalletQuery(req) {
+  let bid =
+    req.query.branch_id != null && req.query.branch_id !== '' ? Number(req.query.branch_id) : Number(req.user.branch_id);
+  if (req.user.role_slug !== 'super_admin') bid = Number(req.user.branch_id);
+  return bid;
+}
+
+/* Daftar baris manual saldo kanal (untuk POS / rekonsiliasi) */
+app.get('/api/wallet-manual-lines', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
+  try {
+    const bid = resolveBranchIdForWalletQuery(req);
+    if (!bid) return fail(res, 400, 'Cabang wajib');
+    if (req.user.role_slug === 'admin_cabang' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
+    if (req.user.role_slug === 'kasir' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
+    const d = (req.query.line_date || '').toString().slice(0, 10) || new Date().toISOString().slice(0, 10);
+    const ch = (req.query.channel || '').toString().toLowerCase();
+    if (!['simpel', 'digipos', 'bonafit'].includes(ch)) return fail(res, 400, 'channel wajib (simpel, digipos, bonafit)');
+    const [rows] = await pool.query(
+      `SELECT id, branch_id, line_date, channel, customer_phone, description, cost_amount, sale_amount, created_at
+       FROM wallet_manual_lines WHERE branch_id = :bid AND line_date = :d AND channel = :ch ORDER BY id`,
+      { bid, d, ch }
+    );
+    const total_modal = rows.reduce((a, r) => a + Number(r.cost_amount || 0), 0);
+    const total_sale = rows.reduce((a, r) => a + Number(r.sale_amount || 0), 0);
+    return ok(res, { lines: rows, total_modal, total_sale, profit: total_sale - total_modal }, '');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
 /* Baris manual saldo kanal (keterangan bebas + modal + harga jual) */
 app.post('/api/wallet-manual-lines', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
   try {
@@ -1725,6 +1762,65 @@ app.delete('/api/wallet-manual-lines/:id', authMiddleware, requireRoles('super_a
     const bid = rows[0].branch_id;
     if (req.user.role_slug !== 'super_admin' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Tidak diizinkan');
     await pool.query(`DELETE FROM wallet_manual_lines WHERE id = :id`, { id });
+    return ok(res, null, 'Baris dihapus');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+/* Saldo masuk (top-up) per kanal — tidak memakai master produk / stok */
+app.get('/api/wallet-topups', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
+  try {
+    const bid = resolveBranchIdForWalletQuery(req);
+    if (!bid) return fail(res, 400, 'Cabang wajib');
+    if (req.user.role_slug === 'admin_cabang' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
+    if (req.user.role_slug === 'kasir' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
+    const d = (req.query.topup_date || '').toString().slice(0, 10) || new Date().toISOString().slice(0, 10);
+    const ch = (req.query.channel || '').toString().toLowerCase();
+    if (!['simpel', 'digipos', 'bonafit'].includes(ch)) return fail(res, 400, 'channel wajib (simpel, digipos, bonafit)');
+    const [rows] = await pool.query(
+      `SELECT id, branch_id, topup_date, channel, amount, notes, created_at
+       FROM wallet_topup_lines WHERE branch_id = :bid AND topup_date = :d AND channel = :ch ORDER BY id`,
+      { bid, d, ch }
+    );
+    const total_topup = rows.reduce((a, r) => a + Number(r.amount || 0), 0);
+    return ok(res, { lines: rows, total_topup }, '');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+app.post('/api/wallet-topups', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
+  try {
+    const { branch_id, topup_date, channel, amount, notes } = req.body || {};
+    const bid = resolveBranchIdForWallet(req, branch_id);
+    if (!bid) return fail(res, 400, 'Cabang wajib');
+    if (req.user.role_slug === 'admin_cabang' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
+    if (req.user.role_slug === 'kasir' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
+    const d = (topup_date || '').toString().slice(0, 10);
+    const ch = (channel || '').toString().toLowerCase();
+    if (!d || !['simpel', 'digipos', 'bonafit'].includes(ch)) return fail(res, 400, 'Tanggal & channel wajib');
+    const amt = Number(amount);
+    if (Number.isNaN(amt) || amt <= 0) return fail(res, 400, 'Nominal saldo masuk harus lebih dari 0');
+    const n = notes != null && String(notes).trim() !== '' ? String(notes).trim().slice(0, 255) : null;
+    const [ins] = await pool.query(
+      `INSERT INTO wallet_topup_lines (branch_id, topup_date, channel, amount, notes, created_by) VALUES (:bid, :d, :ch, :amt, :notes, :uid)`,
+      { bid, d, ch, amt, notes: n, uid: req.user.id }
+    );
+    return ok(res, { id: ins.insertId }, 'Saldo masuk tercatat');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+app.delete('/api/wallet-topups/:id', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [rows] = await pool.query(`SELECT branch_id FROM wallet_topup_lines WHERE id = :id`, { id });
+    if (!rows.length) return fail(res, 404, 'Baris tidak ditemukan');
+    const bid = rows[0].branch_id;
+    if (req.user.role_slug !== 'super_admin' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Tidak diizinkan');
+    await pool.query(`DELETE FROM wallet_topup_lines WHERE id = :id`, { id });
     return ok(res, null, 'Baris dihapus');
   } catch (e) {
     return fail(res, 500, e.message);
