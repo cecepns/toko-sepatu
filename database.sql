@@ -368,10 +368,51 @@ CREATE TABLE payments (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   sale_id BIGINT UNSIGNED NOT NULL,
   method ENUM('cash','transfer','card','qris','other') NOT NULL DEFAULT 'cash',
+  wallet_channel VARCHAR(24) NULL DEFAULT NULL COMMENT 'simpel|digipos|bonafit — top-up via aplikasi',
   amount DECIMAL(14,2) NOT NULL,
   paid_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_pay_sale FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
-  INDEX idx_payments_sale (sale_id)
+  INDEX idx_payments_sale (sale_id),
+  INDEX idx_payments_wallet (wallet_channel)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ------------------------------------------------------------
+-- wallet_daily_snapshots (saldo awal/akhir per kanal & cabang)
+-- ------------------------------------------------------------
+CREATE TABLE wallet_daily_snapshots (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  branch_id INT UNSIGNED NOT NULL,
+  snapshot_date DATE NOT NULL,
+  channel VARCHAR(24) NOT NULL,
+  opening_balance DECIMAL(14,2) NOT NULL DEFAULT 0,
+  closing_balance DECIMAL(14,2) NULL,
+  notes VARCHAR(255) NULL,
+  created_by INT UNSIGNED NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_wallet_day (branch_id, snapshot_date, channel),
+  CONSTRAINT fk_wds_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+  CONSTRAINT fk_wds_user FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ------------------------------------------------------------
+-- wallet_manual_lines (transaksi saldo kanal tanpa master produk)
+-- ------------------------------------------------------------
+CREATE TABLE wallet_manual_lines (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  branch_id INT UNSIGNED NOT NULL,
+  line_date DATE NOT NULL,
+  channel VARCHAR(24) NOT NULL COMMENT 'simpel|digipos|bonafit',
+  customer_phone VARCHAR(32) NULL,
+  description VARCHAR(255) NOT NULL,
+  cost_amount DECIMAL(14,2) NOT NULL DEFAULT 0 COMMENT 'Modal — estimasi potong saldo aplikasi',
+  sale_amount DECIMAL(14,2) NOT NULL DEFAULT 0 COMMENT 'Harga jual ke pelanggan',
+  created_by INT UNSIGNED NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_wml_branch_date_ch (branch_id, line_date, channel),
+  CONSTRAINT fk_wml_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+  CONSTRAINT fk_wml_user FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ------------------------------------------------------------

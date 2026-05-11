@@ -85,6 +85,7 @@ Body cabang: `code`, `name`, `address`, `phone`, `status`, `latitude`, `longitud
 | GET | `/api/stock/central` | super_admin, admin_cabang |
 | GET | `/api/stock/branch/:branchId` | login (non–super_admin: hanya cabang sendiri) |
 | GET | `/api/stock-mutations` | super_admin, admin_cabang |
+| POST | `/api/stock/adjust` | super_admin, admin_cabang | Body: `{ scope: "central" \| "branch", branch_id? (wajib jika branch), product_id, quantity_delta, notes? }` — `quantity_delta` positif menambah, negatif mengurang; tercatat sebagai `adjustment` di `stock_mutations`. |
 
 ---
 

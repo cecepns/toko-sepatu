@@ -96,6 +96,33 @@ function distanceMeters(lat1, lon1, lat2, lon2) {
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 }
 
+/** Buat baris employees otomatis untuk user cabang (kasir/karyawan) agar absensi bisa dipakai */
+async function ensureEmployeeForAttendance(poolConn, user) {
+  const [em] = await poolConn.query(
+    `SELECT e.*, b.latitude AS blat, b.longitude AS blng, b.attendance_radius_meters AS rad
+     FROM employees e JOIN branches b ON b.id = e.branch_id WHERE e.user_id = :uid LIMIT 1`,
+    { uid: user.id }
+  );
+  if (em[0]) return em[0];
+  const bid = user.branch_id;
+  if (!bid) return null;
+  const code = `AUTO-${user.id}`;
+  try {
+    await poolConn.query(
+      `INSERT INTO employees (user_id, branch_id, employee_code, position) VALUES (:uid, :bid, :code, :pos)`,
+      { uid: user.id, bid, code, pos: user.role_slug || 'staff' }
+    );
+  } catch (e) {
+    if (e.code !== 'ER_DUP_ENTRY') throw e;
+  }
+  const [em2] = await poolConn.query(
+    `SELECT e.*, b.latitude AS blat, b.longitude AS blng, b.attendance_radius_meters AS rad
+     FROM employees e JOIN branches b ON b.id = e.branch_id WHERE e.user_id = :uid LIMIT 1`,
+    { uid: user.id }
+  );
+  return em2[0] || null;
+}
+
 async function logActivity(userId, action, entity, entityId, meta, ip) {
   try {
     await pool.query(
@@ -735,6 +762,84 @@ app.get('/api/stock/branch/:branchId', authMiddleware, async (req, res) => {
   }
 });
 
+/** Koreksi stok manual (tambah/kurang); tercatat di stock_mutations */
+app.post('/api/stock/adjust', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { scope, branch_id, product_id, quantity_delta, notes } = req.body || {};
+    const pid = Number(product_id);
+    const delta = Number(quantity_delta);
+    if (!pid || !Number.isFinite(delta) || delta === 0) return fail(res, 400, 'Produk & selisih qty wajib');
+
+    await conn.beginTransaction();
+    if (scope === 'central') {
+      const [sc] = await conn.query(`SELECT quantity FROM stock_central WHERE product_id=:pid FOR UPDATE`, { pid });
+      if (!sc[0]) {
+        await conn.rollback();
+        return fail(res, 404, 'Stok pusat untuk produk ini belum ada');
+      }
+      const next = Number(sc[0].quantity) + delta;
+      if (next < 0) {
+        await conn.rollback();
+        return fail(res, 400, 'Stok tidak boleh negatif');
+      }
+      await conn.query(`UPDATE stock_central SET quantity=:q WHERE product_id=:pid`, { q: next, pid });
+      await conn.query(
+        `INSERT INTO stock_mutations (branch_id, product_id, mutation_type, quantity_delta, ref_type, ref_id, notes, created_by)
+         VALUES (NULL, :pid, 'adjustment', :d, 'manual_adjust', NULL, :n, :uid)`,
+        { pid, d: delta, n: (notes && String(notes).slice(0, 250)) || null, uid: req.user.id }
+      );
+    } else if (scope === 'branch') {
+      const bid = Number(branch_id);
+      if (!bid) {
+        await conn.rollback();
+        return fail(res, 400, 'branch_id wajib untuk stok cabang');
+      }
+      if (req.user.role_slug !== 'super_admin' && Number(req.user.branch_id) !== bid) {
+        await conn.rollback();
+        return fail(res, 403, 'Hanya bisa menyesuaikan stok cabang sendiri');
+      }
+      const [sb] = await conn.query(
+        `SELECT quantity FROM stock_branch WHERE branch_id=:bid AND product_id=:pid FOR UPDATE`,
+        { bid, pid }
+      );
+      if (!sb[0]) {
+        if (delta < 0) {
+          await conn.rollback();
+          return fail(res, 400, 'Stok cabang belum ada untuk produk ini');
+        }
+        await conn.query(`INSERT INTO stock_branch (branch_id, product_id, quantity) VALUES (:bid, :pid, :q)`, {
+          bid,
+          pid,
+          q: delta,
+        });
+      } else {
+        const next = Number(sb[0].quantity) + delta;
+        if (next < 0) {
+          await conn.rollback();
+          return fail(res, 400, 'Stok tidak boleh negatif');
+        }
+        await conn.query(`UPDATE stock_branch SET quantity=:q WHERE branch_id=:bid AND product_id=:pid`, { q: next, bid, pid });
+      }
+      await conn.query(
+        `INSERT INTO stock_mutations (branch_id, product_id, mutation_type, quantity_delta, ref_type, ref_id, notes, created_by)
+         VALUES (:bid, :pid, 'adjustment', :d, 'manual_adjust', NULL, :n, :uid)`,
+        { bid, pid, d: delta, n: (notes && String(notes).slice(0, 250)) || null, uid: req.user.id }
+      );
+    } else {
+      await conn.rollback();
+      return fail(res, 400, 'scope harus "central" atau "branch"');
+    }
+    await conn.commit();
+    return ok(res, { ok: true }, 'Stok diperbarui');
+  } catch (e) {
+    await conn.rollback();
+    return fail(res, 500, e.message);
+  } finally {
+    conn.release();
+  }
+});
+
 /* Stock transfers */
 app.get('/api/stock-transfers', authMiddleware, async (req, res) => {
   try {
@@ -769,11 +874,17 @@ app.get('/api/stock-transfers', authMiddleware, async (req, res) => {
 app.get('/api/stock-transfers/:id', authMiddleware, async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const [t] = await pool.query(`SELECT * FROM stock_transfers WHERE id=:id`, { id });
+    const [t] = await pool.query(
+      `SELECT st.*, b.name AS to_branch_name FROM stock_transfers st
+       JOIN branches b ON b.id = st.to_branch_id WHERE st.id=:id`,
+      { id }
+    );
     if (!t[0]) return fail(res, 404, 'Transfer tidak ada');
-    if (req.user.role_slug !== 'super_admin' && Number(t[0].to_branch_id) !== Number(req.user.branch_id)) {
-      return fail(res, 403, 'Akses ditolak');
-    }
+    const canSee =
+      req.user.role_slug === 'super_admin' ||
+      Number(t[0].to_branch_id) === Number(req.user.branch_id) ||
+      Number(t[0].requested_by) === Number(req.user.id);
+    if (!canSee) return fail(res, 403, 'Akses ditolak');
     const [items] = await pool.query(
       `SELECT sti.*, p.name, p.sku FROM stock_transfer_items sti JOIN products p ON p.id = sti.product_id WHERE sti.transfer_id=:id`,
       { id }
@@ -784,15 +895,26 @@ app.get('/api/stock-transfers/:id', authMiddleware, async (req, res) => {
   }
 });
 
-app.post('/api/stock-transfers', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+app.post('/api/stock-transfers', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const { to_branch_id, items, notes } = req.body || {};
     if (!to_branch_id || !Array.isArray(items) || !items.length) return fail(res, 400, 'Item transfer wajib');
     const from_source = 'central';
     const toBid = Number(to_branch_id);
-    if (req.user.role_slug === 'admin_cabang' && Number(req.user.branch_id) !== toBid) {
+    if (req.user.role_slug === 'kasir') {
+      if (!req.user.branch_id || Number(req.user.branch_id) !== toBid) {
+        return fail(res, 403, 'Kasir hanya boleh mengajukan minta stok untuk cabang sendiri');
+      }
+    } else if (req.user.role_slug === 'admin_cabang' && Number(req.user.branch_id) !== toBid) {
       return fail(res, 403, 'Admin hanya boleh request ke cabang sendiri');
+    }
+    const normalized = [];
+    for (const it of items) {
+      const pid = Number(it.product_id);
+      const qty = Number(it.quantity);
+      if (!pid || !Number.isFinite(qty) || qty < 1) return fail(res, 400, 'Setiap item wajib punya produk & qty minimal 1');
+      normalized.push({ product_id: pid, quantity: Math.floor(qty) });
     }
     const num = `TRF-${Date.now()}`;
     await conn.beginTransaction();
@@ -802,7 +924,7 @@ app.post('/api/stock-transfers', authMiddleware, requireRoles('super_admin', 'ad
       { num, fs: from_source, toBid, uid: req.user.id, notes: notes || null }
     );
     const tid = ins.insertId;
-    for (const it of items) {
+    for (const it of normalized) {
       await conn.query(
         `INSERT INTO stock_transfer_items (transfer_id, product_id, quantity) VALUES (:tid, :pid, :qty)`,
         { tid, pid: it.product_id, qty: it.quantity }
@@ -826,13 +948,18 @@ app.patch('/api/stock-transfers/:id/approve', authMiddleware, requireRoles('supe
     const [t] = await conn.query(`SELECT * FROM stock_transfers WHERE id=:id FOR UPDATE`, { id });
     const tr = t[0];
     if (!tr || tr.status !== 'pending') return fail(res, 400, 'Transfer tidak dapat disetujui');
-    const [items] = await conn.query(`SELECT * FROM stock_transfer_items WHERE transfer_id=:id`, { id });
+    const [items] = await conn.query(
+      `SELECT sti.*, p.sku, p.name AS product_name FROM stock_transfer_items sti
+       JOIN products p ON p.id = sti.product_id WHERE sti.transfer_id=:id`,
+      { id }
+    );
     await conn.beginTransaction();
     for (const it of items) {
       const [sc] = await conn.query(`SELECT quantity FROM stock_central WHERE product_id=:pid FOR UPDATE`, { pid: it.product_id });
       if (!sc[0] || sc[0].quantity < it.quantity) {
         await conn.rollback();
-        return fail(res, 400, `Stok pusat tidak cukup untuk produk ID ${it.product_id}`);
+        const label = it.product_name || it.sku || `ID ${it.product_id}`;
+        return fail(res, 400, `Stok pusat tidak cukup untuk ${label} (minta ${it.quantity}, tersedia ${sc[0]?.quantity ?? 0})`);
       }
       await conn.query(`UPDATE stock_central SET quantity = quantity - :q WHERE product_id=:pid`, { q: it.quantity, pid: it.product_id });
       await conn.query(
@@ -991,7 +1118,7 @@ app.get('/api/resellers', authMiddleware, async (req, res) => {
     let where = ` WHERE 1=1 ${bf.sql}`;
     const params = { ...bf.params };
     if (search) {
-      where += ' AND (c.name LIKE :s OR r.company_name LIKE :s) ';
+      where += ' AND (c.name LIKE :s OR r.company_name LIKE :s OR c.phone LIKE :s OR c.address LIKE :s) ';
       params.s = `%${search}%`;
     }
     const sortCol = ['id', 'company_name', 'created_at'].includes(sort) ? (sort === 'id' ? 'r.id' : sort === 'created_at' ? 'r.created_at' : 'r.company_name') : 'r.id';
@@ -1009,7 +1136,7 @@ app.get('/api/resellers', authMiddleware, async (req, res) => {
   }
 });
 
-app.post('/api/resellers', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+app.post('/api/resellers', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
   try {
     const { customer_id, company_name, tax_id } = req.body || {};
     if (!customer_id || !company_name) return fail(res, 400, 'Customer & nama perusahaan wajib');
@@ -1063,6 +1190,7 @@ app.post('/api/sales', authMiddleware, requireRoles('super_admin', 'admin_cabang
       tax_percent,
       notes,
       payment_method,
+      wallet_channel,
     } = req.body || {};
     const bid = Number(branch_id || req.user.branch_id);
     if (!bid) return fail(res, 400, 'Cabang wajib');
@@ -1164,9 +1292,13 @@ app.post('/api/sales', authMiddleware, requireRoles('super_admin', 'admin_cabang
         { bid, pid: lr.product_id, d: -lr.qty, sid: saleId, uid: req.user.id }
       );
     }
+    const wc =
+      wallet_channel && ['simpel', 'digipos', 'bonafit'].includes(String(wallet_channel).toLowerCase())
+        ? String(wallet_channel).toLowerCase()
+        : null;
     await conn.query(
-      `INSERT INTO payments (sale_id, method, amount) VALUES (:sid, :m, :amt)`,
-      { sid: saleId, m: payment_method || 'cash', amt: grand }
+      `INSERT INTO payments (sale_id, method, wallet_channel, amount) VALUES (:sid, :m, :wc, :amt)`,
+      { sid: saleId, m: payment_method || 'cash', amt: grand, wc }
     );
     await conn.commit();
     await logActivity(req.user.id, 'create_sale', 'sale', saleId, { grand_total: grand }, req.ip);
@@ -1251,7 +1383,8 @@ app.get('/api/attendances', authMiddleware, async (req, res) => {
     const { page, limit, offset, search, sort, order } = parsePagination(req.query);
     let where = ' WHERE 1=1 ';
     const params = {};
-    if (req.user.role_slug === 'karyawan') {
+    if (req.user.role_slug === 'karyawan' || req.user.role_slug === 'kasir') {
+      await ensureEmployeeForAttendance(pool, req.user);
       const [em] = await pool.query(`SELECT id FROM employees WHERE user_id=:uid LIMIT 1`, { uid: req.user.id });
       where += ' AND a.employee_id = :eid ';
       params.eid = em[0]?.id || 0;
@@ -1281,14 +1414,12 @@ app.get('/api/attendances', authMiddleware, async (req, res) => {
   }
 });
 
-app.post('/api/attendances/clock-in', authMiddleware, requireRoles('karyawan', 'admin_cabang', 'super_admin'), async (req, res) => {
+app.post('/api/attendances/clock-in', authMiddleware, requireRoles('karyawan', 'kasir', 'admin_cabang', 'super_admin'), async (req, res) => {
   try {
     const { latitude, longitude } = req.body || {};
     if (latitude == null || longitude == null) return fail(res, 400, 'GPS wajib');
-    const [em] = await pool.query(`SELECT e.*, b.latitude AS blat, b.longitude AS blng, b.attendance_radius_meters AS rad
-       FROM employees e JOIN branches b ON b.id=e.branch_id WHERE e.user_id=:uid LIMIT 1`, { uid: req.user.id });
-    const emp = em[0];
-    if (!emp) return fail(res, 400, 'Data karyawan tidak ditemukan');
+    let emp = await ensureEmployeeForAttendance(pool, req.user);
+    if (!emp) return fail(res, 400, 'Akun tidak terikat cabang; hubungi admin untuk data karyawan');
     const dist = distanceMeters(Number(latitude), Number(longitude), Number(emp.blat), Number(emp.blng));
     if (dist > Number(emp.rad)) {
       return fail(res, 400, `Di luar radius cabang (~${Math.round(dist)}m, max ${emp.rad}m)`);
@@ -1298,7 +1429,6 @@ app.post('/api/attendances/clock-in', authMiddleware, requireRoles('karyawan', '
       { eid: emp.id }
     );
     if (open[0]) return fail(res, 400, 'Sudah clock in hari ini');
-    const [br] = await pool.query(`SELECT * FROM branches WHERE id=:id`, { id: emp.branch_id });
     const workStart = new Date();
     workStart.setHours(8, 0, 0, 0);
     const lateMin = Math.max(0, Math.floor((Date.now() - workStart.getTime()) / 60000));
@@ -1315,13 +1445,12 @@ app.post('/api/attendances/clock-in', authMiddleware, requireRoles('karyawan', '
   }
 });
 
-app.post('/api/attendances/clock-out', authMiddleware, requireRoles('karyawan', 'admin_cabang', 'super_admin'), async (req, res) => {
+app.post('/api/attendances/clock-out', authMiddleware, requireRoles('karyawan', 'kasir', 'admin_cabang', 'super_admin'), async (req, res) => {
   try {
     const { latitude, longitude } = req.body || {};
     if (latitude == null || longitude == null) return fail(res, 400, 'GPS wajib');
-    const [em] = await pool.query(`SELECT id, branch_id FROM employees WHERE user_id=:uid LIMIT 1`, { uid: req.user.id });
-    const emp = em[0];
-    if (!emp) return fail(res, 400, 'Karyawan tidak ditemukan');
+    let emp = await ensureEmployeeForAttendance(pool, req.user);
+    if (!emp) return fail(res, 400, 'Akun tidak terikat cabang; hubungi admin untuk data karyawan');
     const [b] = await pool.query(`SELECT latitude, longitude, attendance_radius_meters AS rad FROM branches WHERE id=:id`, { id: emp.branch_id });
     const dist = distanceMeters(Number(latitude), Number(longitude), Number(b[0].latitude), Number(b[0].longitude));
     if (dist > Number(b[0].rad)) return fail(res, 400, 'Clock out di luar radius');
@@ -1343,28 +1472,42 @@ app.post('/api/attendances/clock-out', authMiddleware, requireRoles('karyawan', 
 /* Dashboard */
 app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
   try {
+    const staffToday = req.user.role_slug === 'kasir' || req.user.role_slug === 'karyawan';
     let branchClause = '';
     const params = {};
     if (req.user.role_slug !== 'super_admin') {
       branchClause = ' AND branch_id = :bid ';
       params.bid = req.user.branch_id;
     }
+    const salesDateClause = staffToday ? ' AND DATE(created_at) = CURDATE() ' : ' AND created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) ';
     const [salesAgg] = await pool.query(
-      `SELECT COUNT(*) AS cnt, COALESCE(SUM(grand_total),0) AS revenue FROM sales WHERE 1=1 ${branchClause} AND created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`,
+      `SELECT COUNT(*) AS cnt, COALESCE(SUM(grand_total),0) AS revenue FROM sales WHERE 1=1 ${branchClause} ${salesDateClause}`,
       params
     );
     const [topProducts] = await pool.query(
       `SELECT p.name, SUM(si.quantity) AS qty FROM sale_items si
        JOIN sales s ON s.id = si.sale_id JOIN products p ON p.id = si.product_id
-       WHERE 1=1 ${branchClause} AND s.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+       WHERE 1=1 ${branchClause} ${salesDateClause.replace('created_at', 's.created_at')}
        GROUP BY p.id ORDER BY qty DESC LIMIT 5`,
       params
     );
-    const [topBranches] = await pool.query(
-      `SELECT b.name, COALESCE(SUM(s.grand_total),0) AS revenue FROM branches b
-       LEFT JOIN sales s ON s.branch_id = b.id AND s.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-       GROUP BY b.id ORDER BY revenue DESC LIMIT 5`
-    );
+    let topBranches;
+    if (staffToday && req.user.branch_id) {
+      const [tb] = await pool.query(
+        `SELECT b.name, COALESCE(SUM(s.grand_total),0) AS revenue FROM branches b
+         LEFT JOIN sales s ON s.branch_id = b.id AND DATE(s.created_at) = CURDATE()
+         WHERE b.id = :bid GROUP BY b.id, b.name`,
+        { bid: req.user.branch_id }
+      );
+      topBranches = tb;
+    } else {
+      const [tb] = await pool.query(
+        `SELECT b.name, COALESCE(SUM(s.grand_total),0) AS revenue FROM branches b
+         LEFT JOIN sales s ON s.branch_id = b.id AND s.created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         GROUP BY b.id ORDER BY revenue DESC LIMIT 5`
+      );
+      topBranches = tb;
+    }
     const [lowStock] = await pool.query(
       `SELECT p.name, sb.quantity, p.min_stock, b.name AS branch_name FROM stock_branch sb
        JOIN products p ON p.id = sb.product_id JOIN branches b ON b.id = sb.branch_id
@@ -1372,14 +1515,26 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
        ORDER BY sb.quantity ASC LIMIT 10`,
       req.user.role_slug !== 'super_admin' ? { bid2: req.user.branch_id } : {}
     );
-    const [series] = await pool.query(
-      `SELECT DATE(created_at) AS d, SUM(grand_total) AS total FROM sales WHERE 1=1 ${branchClause}
-       AND created_at >= DATE_SUB(CURDATE(), INTERVAL 14 DAY) GROUP BY DATE(created_at) ORDER BY d`,
-      params
-    );
+    let series;
+    if (staffToday) {
+      const [hr] = await pool.query(
+        `SELECT HOUR(created_at) AS h, SUM(grand_total) AS total FROM sales WHERE 1=1 ${branchClause}
+         AND DATE(created_at) = CURDATE() GROUP BY HOUR(created_at) ORDER BY h`,
+        params
+      );
+      series = hr;
+    } else {
+      const [s2] = await pool.query(
+        `SELECT DATE(created_at) AS d, SUM(grand_total) AS total FROM sales WHERE 1=1 ${branchClause}
+         AND created_at >= DATE_SUB(CURDATE(), INTERVAL 14 DAY) GROUP BY DATE(created_at) ORDER BY d`,
+        params
+      );
+      series = s2;
+    }
     return ok(
       res,
       {
+        scope: staffToday ? 'staff_today' : 'default',
         sales_30d: salesAgg[0],
         chart_sales: series,
         top_products: topProducts,
@@ -1388,6 +1543,171 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
       },
       ''
     );
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+/* Laporan harian operator + saldo kanal (Simpel / Digipos / Bonafit) */
+app.get('/api/reports/daily-shift', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
+  try {
+    const date = (req.query.date || '').toString().slice(0, 10) || new Date().toISOString().slice(0, 10);
+    let bid = req.query.branch_id != null ? Number(req.query.branch_id) : Number(req.user.branch_id);
+    if (req.user.role_slug !== 'super_admin') bid = Number(req.user.branch_id);
+    if (!bid) return fail(res, 400, 'Cabang wajib');
+    if (req.user.role_slug !== 'super_admin' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Cabang tidak sesuai');
+
+    const base = { bid, d: date };
+    const [grosir] = await pool.query(
+      `SELECT si.quantity, si.unit_price, si.line_subtotal, p.name AS product_name, p.sku, p.hpp,
+              s.sale_number, c.phone AS customer_phone
+       FROM sale_items si
+       JOIN sales s ON s.id = si.sale_id
+       JOIN products p ON p.id = si.product_id
+       LEFT JOIN customers c ON c.id = s.customer_id
+       WHERE s.branch_id = :bid AND DATE(s.created_at) = :d AND s.is_wholesale_context = 1
+       ORDER BY s.id, si.id`,
+      base
+    );
+
+    const channelKeys = ['simpel', 'digipos', 'bonafit'];
+    const channels = {};
+    for (const ch of channelKeys) {
+      const [lines] = await pool.query(
+        `SELECT si.quantity, si.unit_price, si.line_subtotal, p.name AS product_name, p.sku, p.hpp,
+                s.sale_number, c.phone AS customer_phone
+         FROM sale_items si
+         JOIN sales s ON s.id = si.sale_id
+         INNER JOIN payments pay ON pay.sale_id = s.id AND pay.wallet_channel = :ch
+         JOIN products p ON p.id = si.product_id
+         LEFT JOIN customers c ON c.id = s.customer_id
+         WHERE s.branch_id = :bid AND DATE(s.created_at) = :d
+         ORDER BY s.id, si.id`,
+        { ...base, ch }
+      );
+      const [manualRows] = await pool.query(
+        `SELECT id, customer_phone, description, cost_amount, sale_amount
+         FROM wallet_manual_lines WHERE branch_id = :bid AND line_date = :d AND channel = :ch
+         ORDER BY id`,
+        { ...base, ch }
+      );
+      const posLines = lines.map((row) => ({ ...row, source: 'pos' }));
+      const manualLines = manualRows.map((m) => ({
+        source: 'manual',
+        manual_line_id: m.id,
+        quantity: 1,
+        unit_price: Number(m.sale_amount),
+        line_subtotal: Number(m.sale_amount),
+        product_name: m.description,
+        sku: '',
+        hpp: Number(m.cost_amount),
+        customer_phone: m.customer_phone,
+        sale_number: null,
+      }));
+      const posJual = lines.reduce((acc, row) => acc + Number(row.line_subtotal || 0), 0);
+      const posModal = lines.reduce((acc, row) => acc + Number(row.hpp || 0) * Number(row.quantity || 0), 0);
+      const manJual = manualLines.reduce((a, row) => a + Number(row.line_subtotal || 0), 0);
+      const manModal = manualLines.reduce((a, row) => a + Number(row.hpp || 0) * Number(row.quantity || 0), 0);
+      channels[ch] = {
+        lines: [...posLines, ...manualLines],
+        total_jual: posJual + manJual,
+        total_modal: posModal + manModal,
+      };
+    }
+
+    const [snaps] = await pool.query(
+      `SELECT channel, opening_balance, closing_balance, notes FROM wallet_daily_snapshots WHERE branch_id = :bid AND snapshot_date = :d`,
+      base
+    );
+    const snapshots = {};
+    for (const s of snaps) snapshots[s.channel] = s;
+
+    const grosir_total = grosir.reduce((a, r) => a + Number(r.line_subtotal || 0), 0);
+
+    return ok(
+      res,
+      {
+        date,
+        branch_id: bid,
+        grosir,
+        grosir_total,
+        channels,
+        snapshots,
+      },
+      ''
+    );
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+app.put('/api/wallet-snapshots', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const { branch_id, snapshot_date, channel, opening_balance, closing_balance, notes } = req.body || {};
+    const bid = Number(branch_id);
+    const d = (snapshot_date || '').toString().slice(0, 10);
+    const ch = (channel || '').toString().toLowerCase();
+    if (!bid || !d || !ch) return fail(res, 400, 'branch_id, snapshot_date, channel wajib');
+    if (!['simpel', 'digipos', 'bonafit'].includes(ch)) return fail(res, 400, 'Channel harus simpel, digipos, atau bonafit');
+    if (req.user.role_slug === 'admin_cabang' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
+    const ob = opening_balance != null && opening_balance !== '' ? Number(opening_balance) : 0;
+    const cb = closing_balance != null && closing_balance !== '' ? Number(closing_balance) : null;
+    await pool.query(
+      `INSERT INTO wallet_daily_snapshots (branch_id, snapshot_date, channel, opening_balance, closing_balance, notes, created_by)
+       VALUES (:bid, :d, :ch, :ob, :cb, :notes, :uid)
+       ON DUPLICATE KEY UPDATE opening_balance = VALUES(opening_balance), closing_balance = VALUES(closing_balance), notes = VALUES(notes), created_by = VALUES(created_by)`,
+      { bid, d, ch, ob, cb, notes: notes || null, uid: req.user.id }
+    );
+    return ok(res, { ok: true }, 'Saldo harian disimpan');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+function resolveBranchIdForWallet(req, bodyBranchId) {
+  let bid = bodyBranchId != null ? Number(bodyBranchId) : Number(req.user.branch_id);
+  if (req.user.role_slug !== 'super_admin') bid = Number(req.user.branch_id);
+  return bid;
+}
+
+/* Baris manual saldo kanal (keterangan bebas + modal + harga jual) */
+app.post('/api/wallet-manual-lines', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
+  try {
+    const { branch_id, line_date, channel, customer_phone, description, cost_amount, sale_amount } = req.body || {};
+    const bid = resolveBranchIdForWallet(req, branch_id);
+    if (!bid) return fail(res, 400, 'Cabang wajib');
+    if (req.user.role_slug === 'admin_cabang' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
+    if (req.user.role_slug === 'kasir' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
+    const d = (line_date || '').toString().slice(0, 10);
+    const ch = (channel || '').toString().toLowerCase();
+    if (!d || !['simpel', 'digipos', 'bonafit'].includes(ch)) return fail(res, 400, 'Tanggal & channel wajib (simpel, digipos, bonafit)');
+    const desc = (description || '').toString().trim();
+    if (!desc) return fail(res, 400, 'Keterangan wajib');
+    const cost = Number(cost_amount);
+    const sale = Number(sale_amount);
+    if (Number.isNaN(cost) || cost < 0) return fail(res, 400, 'Modal tidak valid');
+    if (Number.isNaN(sale) || sale < 0) return fail(res, 400, 'Harga jual tidak valid');
+    const phone = customer_phone != null && String(customer_phone).trim() !== '' ? String(customer_phone).trim().slice(0, 32) : null;
+    const [ins] = await pool.query(
+      `INSERT INTO wallet_manual_lines (branch_id, line_date, channel, customer_phone, description, cost_amount, sale_amount, created_by)
+       VALUES (:bid, :d, :ch, :phone, :desc, :cost, :sale, :uid)`,
+      { bid, d, ch, phone, desc, cost, sale, uid: req.user.id }
+    );
+    return ok(res, { id: ins.insertId }, 'Baris ditambahkan');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+app.delete('/api/wallet-manual-lines/:id', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [rows] = await pool.query(`SELECT branch_id FROM wallet_manual_lines WHERE id = :id`, { id });
+    if (!rows.length) return fail(res, 404, 'Baris tidak ditemukan');
+    const bid = rows[0].branch_id;
+    if (req.user.role_slug !== 'super_admin' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Tidak diizinkan');
+    await pool.query(`DELETE FROM wallet_manual_lines WHERE id = :id`, { id });
+    return ok(res, null, 'Baris dihapus');
   } catch (e) {
     return fail(res, 500, e.message);
   }
@@ -1478,12 +1798,13 @@ app.get('/api/reports/bestsellers', authMiddleware, requireRoles('super_admin', 
       params.bid = req.user.branch_id;
     }
     const [rows] = await pool.query(
-      `SELECT SQL_CALC_FOUND_ROWS p.id, p.name, p.sku, s.branch_id, SUM(si.quantity) AS qty_sold, SUM(si.line_subtotal) AS revenue
+      `SELECT SQL_CALC_FOUND_ROWS p.id, p.name, p.sku, s.branch_id, b.name AS branch_name, SUM(si.quantity) AS qty_sold, SUM(si.line_subtotal) AS revenue
        FROM sale_items si
        JOIN sales s ON s.id = si.sale_id
        JOIN products p ON p.id = si.product_id
+       JOIN branches b ON b.id = s.branch_id
        ${where}
-       GROUP BY p.id, p.name, p.sku, s.branch_id
+       GROUP BY p.id, p.name, p.sku, s.branch_id, b.name
        ORDER BY qty_sold DESC
        LIMIT :limit OFFSET :offset`,
       { ...params, limit, offset }

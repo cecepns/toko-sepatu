@@ -19,7 +19,12 @@ function todayISO() {
   return `${y}-${m}-${day}`;
 }
 
-function LineTable({ rows, showPhone }) {
+function lineRowKey(r, i) {
+  if (r.manual_line_id != null) return `m-${r.manual_line_id}`;
+  return `p-${r.sale_number ?? 'x'}-${i}`;
+}
+
+function LineTable({ rows, showPhone, onDeleteManual }) {
   if (!rows?.length) {
     return <p className="py-3 text-center text-sm text-slate-500">Belum ada baris</p>;
   }
@@ -30,20 +35,34 @@ function LineTable({ rows, showPhone }) {
           <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
             {showPhone && <th className="px-2 py-2 font-medium">No. HP</th>}
             <th className="px-2 py-2 font-medium">Keterangan</th>
-            <th className="px-2 py-2 text-right font-medium">Modal (HPP)</th>
+            <th className="px-2 py-2 text-right font-medium">Modal</th>
             <th className="px-2 py-2 text-right font-medium">Harga jual</th>
+            {onDeleteManual && <th className="w-14 px-1 py-2 text-center font-medium"> </th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows.map((r, i) => (
-            <tr key={`${r.sale_number}-${i}`} className="hover:bg-slate-50/80">
+            <tr key={lineRowKey(r, i)} className="hover:bg-slate-50/80">
               {showPhone && <td className="px-2 py-2 font-mono text-xs text-slate-700">{r.customer_phone || '—'}</td>}
               <td className="px-2 py-2">
                 <div className="font-medium text-slate-900">{r.product_name}</div>
-                <div className="text-xs text-slate-500">{r.sku}</div>
+                {r.sku ? <div className="text-xs text-slate-500">{r.sku}</div> : null}
               </td>
               <td className="px-2 py-2 text-right tabular-nums">{formatCurrency(Number(r.hpp || 0) * Number(r.quantity || 0))}</td>
               <td className="px-2 py-2 text-right font-medium tabular-nums">{formatCurrency(r.line_subtotal)}</td>
+              {onDeleteManual && (
+                <td className="px-1 py-2 text-center">
+                  {r.manual_line_id != null ? (
+                    <button
+                      type="button"
+                      onClick={() => onDeleteManual(r.manual_line_id)}
+                      className="rounded px-1.5 py-0.5 text-xs font-medium text-red-600 hover:bg-red-50"
+                    >
+                      Hapus
+                    </button>
+                  ) : null}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -52,9 +71,16 @@ function LineTable({ rows, showPhone }) {
   );
 }
 
+const emptyManual = () => ({
+  simpel: { phone: '', desc: '', cost: '', sale: '' },
+  digipos: { phone: '', desc: '', cost: '', sale: '' },
+  bonafit: { phone: '', desc: '', cost: '', sale: '' },
+});
+
 export function DailyShiftReport() {
   const { user } = useAuth();
   const canEditSnap = user?.role_slug === 'super_admin' || user?.role_slug === 'admin_cabang';
+  const canEditManual = user?.role_slug === 'super_admin' || user?.role_slug === 'admin_cabang' || user?.role_slug === 'kasir';
   const [date, setDate] = useState(todayISO());
   const [branchId, setBranchId] = useState(user?.branch_id ? String(user.branch_id) : '');
   const [branches, setBranches] = useState([]);
@@ -65,6 +91,7 @@ export function DailyShiftReport() {
     digipos: { opening: '', closing: '', notes: '' },
     bonafit: { opening: '', closing: '', notes: '' },
   });
+  const [manualForm, setManualForm] = useState(emptyManual);
 
   useEffect(() => {
     if (user?.role_slug !== 'super_admin' || user?.branch_id) return;
@@ -132,6 +159,51 @@ export function DailyShiftReport() {
     }
   };
 
+  const addManualLine = async (slug) => {
+    if (!canEditManual || !effectiveBranch) return;
+    const f = manualForm[slug];
+    const desc = (f.desc || '').trim();
+    if (!desc) {
+      toast.error('Isi keterangan produk');
+      return;
+    }
+    const cost = f.cost === '' ? 0 : Number(f.cost);
+    const sale = f.sale === '' ? 0 : Number(f.sale);
+    if (Number.isNaN(cost) || cost < 0 || Number.isNaN(sale) || sale < 0) {
+      toast.error('Modal dan harga jual harus angka valid');
+      return;
+    }
+    try {
+      const res = await reportService.addWalletManualLine({
+        branch_id: effectiveBranch,
+        line_date: date,
+        channel: slug,
+        customer_phone: (f.phone || '').trim() || null,
+        description: desc,
+        cost_amount: cost,
+        sale_amount: sale,
+      });
+      if (!res.success) throw new Error(res.message);
+      toast.success(res.message || 'Baris ditambahkan');
+      setManualForm((s) => ({ ...s, [slug]: { phone: '', desc: '', cost: '', sale: '' } }));
+      load();
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
+
+  const deleteManualLine = async (id) => {
+    if (!canEditManual) return;
+    try {
+      const res = await reportService.deleteWalletManualLine(id);
+      if (!res.success) throw new Error(res.message);
+      toast.success(res.message || 'Dihapus');
+      load();
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
+
   const grosir = data?.grosir || [];
   const grosirTotal = data?.grosir_total ?? 0;
 
@@ -141,6 +213,9 @@ export function DailyShiftReport() {
         <p className="font-semibold text-sky-950">Cara pakai kanal Simpel / Digipos / Bonafit</p>
         <ul className="mt-2 list-inside list-disc space-y-1 text-sky-900/90">
           <li>Di <strong>POS</strong>, pilih <strong>Saldo aplikasi</strong> saat bayar bila transaksi memotong saldo aplikasi tersebut (bukan tunai murni).</li>
+          <li>
+            Untuk produk yang <strong>tidak ada di master</strong> (pulsa/PLN/kode beda tiap hari), gunakan form <strong>Input manual</strong> per kanal: keterangan bebas, <strong>modal</strong> (estimasi potong saldo), dan <strong>harga jual</strong>.
+          </li>
           <li>Isi <strong>saldo awal / saldo akhir</strong> harian per kanal di bawah (rekonsiliasi dengan aplikasi asli — sistem tidak mengambil saldo langsung dari Digipos/Bonafit kecuali nanti ada integrasi API).</li>
           <li>Laporan <strong>GROSIR</strong> mengambil baris penjualan dengan konteks reseller (sesuai lembar grosir Anda).</li>
         </ul>
@@ -225,11 +300,65 @@ export function DailyShiftReport() {
                       Simpan saldo {label}
                     </button>
                   )}
+                  {canEditManual && (
+                    <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50/80 p-3">
+                      <p className="text-xs font-semibold text-slate-700">Input manual</p>
+                      <p className="mt-0.5 text-[11px] text-slate-500">Nama produk bebas (contoh: PLN 20, pls 100). Modal = potong saldo aplikasi.</p>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        <input
+                          type="text"
+                          inputMode="tel"
+                          placeholder="No. HP (opsional)"
+                          value={manualForm[slug]?.phone ?? ''}
+                          onChange={(e) => setManualForm((s) => ({ ...s, [slug]: { ...s[slug], phone: e.target.value } }))}
+                          className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Keterangan / nama produk"
+                          value={manualForm[slug]?.desc ?? ''}
+                          onChange={(e) => setManualForm((s) => ({ ...s, [slug]: { ...s[slug], desc: e.target.value } }))}
+                          className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          step="1"
+                          placeholder="Modal"
+                          value={manualForm[slug]?.cost ?? ''}
+                          onChange={(e) => setManualForm((s) => ({ ...s, [slug]: { ...s[slug], cost: e.target.value } }))}
+                          className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          step="1"
+                          placeholder="Harga jual"
+                          value={manualForm[slug]?.sale ?? ''}
+                          onChange={(e) => setManualForm((s) => ({ ...s, [slug]: { ...s[slug], sale: e.target.value } }))}
+                          className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => addManualLine(slug)}
+                        className="mt-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                      >
+                        Tambah baris
+                      </button>
+                    </div>
+                  )}
                   <div className="mt-4 min-h-0 flex-1">
-                    <LineTable rows={ch.lines} showPhone />
-                    <div className="mt-2 flex justify-end text-xs">
-                      <span className="text-slate-500">Total jual (kanal)</span>
-                      <span className="ml-2 font-semibold text-slate-900">{formatCurrency(ch.total_jual)}</span>
+                    <LineTable rows={ch.lines} showPhone onDeleteManual={canEditManual ? deleteManualLine : undefined} />
+                    <div className="mt-2 flex flex-col items-end gap-0.5 text-xs">
+                      <div>
+                        <span className="text-slate-500">Total modal (estimasi)</span>
+                        <span className="ml-2 font-semibold text-slate-800">{formatCurrency(ch.total_modal ?? 0)}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Total jual (kanal)</span>
+                        <span className="ml-2 font-semibold text-slate-900">{formatCurrency(ch.total_jual)}</span>
+                      </div>
                     </div>
                   </div>
                 </section>
@@ -244,6 +373,7 @@ export function DailyShiftReport() {
               {CHANNELS.map(({ slug, label }) => (
                 <li key={slug}>
                   Total {label}: {formatCurrency(data.channels?.[slug]?.total_jual ?? 0)}
+                  <span className="text-slate-500"> — modal estimasi {formatCurrency(data.channels?.[slug]?.total_modal ?? 0)}</span>
                 </li>
               ))}
             </ul>

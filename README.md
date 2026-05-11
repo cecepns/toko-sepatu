@@ -93,7 +93,8 @@ cd frontend && npm run build
 1. **Harga grosir** hanya jika transaksi memilih **reseller** aktif dan qty baris ≥ `min_wholesale_qty`. Pembeli biasa selalu **eceran** meskipun qty besar.
 2. **Kasir** tidak punya route untuk mengubah master (kategori, satuan, produk, cabang, user, transfer approval, dll.).
 3. **Transfer stok** dari pusat: cabang mengajukan → **Super Admin** menyetujui/menolak; stok pusat & cabang serta `stock_mutations` diperbarui saat approve.
-4. **Absensi:** clock in/out wajib kirim `latitude` & `longitude`; jarak ke titik cabang harus dalam `attendance_radius_meters`.
+4. **Absensi:** clock in/out wajib kirim `latitude` & `longitude`; jarak ke titik cabang harus dalam `attendance_radius_meters`. User **kasir** tanpa baris `employees` akan dibuat otomatis saat pertama kali absen/list absensi.
+5. **Koreksi stok:** dari UI **Stok Pusat** / **Stok Cabang** (admin) memanggil `POST /api/stock/adjust` — selisih qty positif/negatif, tercatat di mutasi. Selain itu stok naik lewat **transfer** dari pusat ke cabang.
 
 ## Seeder ulang password (opsional)
 
