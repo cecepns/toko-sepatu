@@ -47,6 +47,7 @@ export default function DashboardPage() {
 
   const staffToday = data?.scope === 'staff_today';
   const s = data?.sales_30d;
+  const tom = data?.today_omset;
   const chart = (data?.chart_sales || []).map((r) => ({
     name: chartLabel(r, staffToday),
     total: Number(r.total) || 0,
@@ -107,6 +108,37 @@ export default function DashboardPage() {
           </ul>
         </div>
       </div>
+
+      {tom && (
+        <div className="mt-6 rounded-2xl border border-brand-200 bg-gradient-to-br from-sky-50 to-white p-5 shadow-sm">
+          <h3 className="text-sm font-semibold text-slate-900">Omset hari ini (per kanal)</h3>
+          <p className="mt-1 text-xs text-slate-600">
+            Total omset = jumlah yang perlu di-setor (semua kanal). Laba bersih estimasi dari HPP produk.
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+            {[
+              { label: 'Penjualan', v: tom.penjualan },
+              { label: 'Grosiran', v: tom.grosiran },
+              { label: 'Simpel', v: tom.simpel },
+              { label: 'Digipos', v: tom.digipos },
+              { label: 'Bonafit', v: tom.bonafit },
+              { label: 'Total omset', v: tom.total_omset, bold: true },
+              { label: 'Laba bersih (est.)', v: tom.net_profit, accent: true },
+            ].map((x) => (
+              <div
+                key={x.label}
+                className={`rounded-xl border px-3 py-3 ${x.bold ? 'border-brand-300 bg-white' : 'border-slate-100 bg-white/90'} ${x.accent ? 'border-emerald-200 bg-emerald-50/60' : ''}`}
+              >
+                <p className="text-xs font-medium text-slate-500">{x.label}</p>
+                <p className={`mt-1 text-sm font-semibold tabular-nums ${x.bold ? 'text-brand-900' : 'text-slate-900'} ${x.accent ? 'text-emerald-900' : ''}`}>
+                  {formatCurrency(x.v)}
+                </p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-xs text-slate-500">Transaksi hari ini: {tom.trx_count ?? 0}</p>
+        </div>
+      )}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

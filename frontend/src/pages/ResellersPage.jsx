@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
@@ -6,7 +6,6 @@ import { DataTable } from '@/components/DataTable';
 import { Modal } from '@/components/Modal';
 import { useServerTable } from '@/hooks/useServerTable';
 import { resellerService } from '@/services/resellerService';
-import { customerService } from '@/services/customerService';
 import { useAuth } from '@/contexts/AuthContext';
 import { confirmToast } from '@/utils/confirm';
 
@@ -16,29 +15,21 @@ export default function ResellersPage() {
   const fetcher = useCallback((p) => resellerService.list(p), []);
   const t = useServerTable(fetcher);
   const [modal, setModal] = useState({ open: false, row: null });
-  const [customers, setCustomers] = useState([]);
-
-  useEffect(() => {
-    if (!modal.open || modal.row) return;
-    (async () => {
-      try {
-        const res = await customerService.list({ limit: 200 });
-        if (res.success) setCustomers(res.data || []);
-      } catch {
-        /* */
-      }
-    })();
-  }, [modal.open, modal.row]);
 
   const save = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    const body = {
-      customer_id: Number(fd.get('customer_id')),
-      company_name: fd.get('company_name'),
-      tax_id: fd.get('tax_id'),
-      is_active: fd.get('is_active') === '1',
-    };
+    const company_name = (fd.get('company_name') || '').toString().trim();
+    const phone = (fd.get('phone') || '').toString().trim();
+    const address = (fd.get('address') || '').toString().trim();
+    if (!company_name || !phone || !address) {
+      toast.error('Nama perusahaan, No. HP, dan alamat wajib diisi');
+      return;
+    }
+    const body = { company_name, phone, address };
+    if (modal.row?.id) {
+      body.is_active = fd.get('is_active') === '1';
+    }
     try {
       if (modal.row?.id) await resellerService.update(modal.row.id, body);
       else await resellerService.create(body);
@@ -65,7 +56,7 @@ export default function ResellersPage() {
     <div>
       <PageHeader
         title="Reseller"
-        subtitle="Nama perusahaan, kontak & alamat (dari data customer terkait)"
+        subtitle="Nama perusahaan, No. HP, dan alamat — tanpa menu Customer terpisah"
         action={
           <button
             type="button"
@@ -109,27 +100,18 @@ export default function ResellersPage() {
         pagination={{ page: t.page, totalPages: t.totalPages, total: t.total, onPage: t.setPage }}
       />
       <Modal open={modal.open} title={modal.row ? 'Edit Reseller' : 'Tambah Reseller'} onClose={() => setModal({ open: false, row: null })}>
-        <form onSubmit={save} className="space-y-3">
-          {!modal.row && (
-            <div>
-              <label className="text-xs font-medium text-slate-600">Customer</label>
-              <select name="customer_id" required className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
-                <option value="">Pilih</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.code} — {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+        <form key={modal.row?.id ?? 'new'} onSubmit={save} className="space-y-3">
           <div>
             <label className="text-xs font-medium text-slate-600">Nama perusahaan</label>
             <input name="company_name" required defaultValue={modal.row?.company_name} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
           </div>
           <div>
-            <label className="text-xs font-medium text-slate-600">NPWP / Tax ID</label>
-            <input name="tax_id" defaultValue={modal.row?.tax_id} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+            <label className="text-xs font-medium text-slate-600">No. HP</label>
+            <input name="phone" type="tel" required defaultValue={modal.row?.phone ?? ''} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-600">Alamat</label>
+            <textarea name="address" required rows={3} defaultValue={modal.row?.address ?? ''} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
           </div>
           {modal.row && (
             <div>

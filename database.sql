@@ -232,6 +232,7 @@ CREATE TABLE stock_transfers (
   from_source ENUM('central','branch') NOT NULL DEFAULT 'central',
   from_branch_id INT UNSIGNED NULL COMMENT 'Jika from branch',
   to_branch_id INT UNSIGNED NOT NULL,
+  transfer_date DATE NOT NULL COMMENT 'Tanggal efektif / referensi transfer',
   status ENUM('pending','approved','rejected','completed') NOT NULL DEFAULT 'pending',
   requested_by INT UNSIGNED NOT NULL,
   approved_by INT UNSIGNED NULL,
@@ -244,7 +245,8 @@ CREATE TABLE stock_transfers (
   CONSTRAINT fk_st_req_user FOREIGN KEY (requested_by) REFERENCES users(id) ON DELETE RESTRICT,
   CONSTRAINT fk_st_app_user FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL,
   INDEX idx_st_status (status),
-  INDEX idx_st_to (to_branch_id)
+  INDEX idx_st_to (to_branch_id),
+  INDEX idx_st_transfer_date (transfer_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE stock_transfer_items (
@@ -519,8 +521,8 @@ INSERT INTO memberships (customer_id, tier, points) VALUES
 INSERT INTO resellers (customer_id, company_name, tax_id, is_active) VALUES
 (2, 'CV Melati Jaya', '01.234.567.8-901.000', 1);
 
-INSERT INTO stock_transfers (transfer_number, from_source, from_branch_id, to_branch_id, status, requested_by, approved_by, approved_at, notes) VALUES
-('TRF-20250101-0001', 'central', NULL, 2, 'completed', 2, 1, NOW(), 'Transfer awal stok');
+INSERT INTO stock_transfers (transfer_number, from_source, from_branch_id, to_branch_id, transfer_date, status, requested_by, approved_by, approved_at, notes) VALUES
+('TRF-20250101-0001', 'central', NULL, 2, '2025-01-01', 'completed', 2, 1, NOW(), 'Transfer awal stok');
 
 INSERT INTO stock_transfer_items (transfer_id, product_id, quantity) VALUES
 (1, 1, 20), (1, 3, 100);

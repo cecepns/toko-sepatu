@@ -14,7 +14,6 @@ import TransfersPage from '@/pages/TransfersPage';
 import PosPage from '@/pages/PosPage';
 import SalesPage from '@/pages/SalesPage';
 import SaleDetailPage from '@/pages/SaleDetailPage';
-import CustomersPage from '@/pages/CustomersPage';
 import ResellersPage from '@/pages/ResellersPage';
 import AttendancePage from '@/pages/AttendancePage';
 import ReportsPage from '@/pages/ReportsPage';
@@ -43,7 +42,6 @@ export default function App() {
         <Route path="stock-central" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><StockCentralPage /></ProtectedRoute>} />
         <Route path="stock-branch" element={<StockBranchPage />} />
         <Route path="transfers" element={<ProtectedRoute roles={['super_admin', 'admin_cabang', 'kasir']}><TransfersPage /></ProtectedRoute>} />
-        <Route path="customers" element={<ProtectedRoute roles={['super_admin', 'admin_cabang', 'kasir']}><CustomersPage /></ProtectedRoute>} />
         <Route path="resellers" element={<ProtectedRoute roles={['super_admin', 'admin_cabang', 'kasir']}><ResellersPage /></ProtectedRoute>} />
         <Route path="attendance" element={<ProtectedRoute roles={['super_admin', 'admin_cabang', 'karyawan', 'kasir']}><AttendancePage /></ProtectedRoute>} />
         <Route path="reports" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><ReportsPage /></ProtectedRoute>} />

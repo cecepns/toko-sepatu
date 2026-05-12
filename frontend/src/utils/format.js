@@ -23,6 +23,21 @@ export function formatExportDate(d) {
   });
 }
 
+/** Tanggal laporan YYYY-MM-DD → DD/MM/YYYY (seperti lembar harian) */
+export function formatReportDay(value) {
+  if (value == null || value === '') return '-';
+  const s = String(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [y, m, day] = s.split('-');
+    return `${day}/${m}/${y}`;
+  }
+  const x = new Date(s);
+  if (!Number.isNaN(x.getTime())) {
+    return x.toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  }
+  return s;
+}
+
 /** Periode agregat penjualan (tanggal / bulan / tahun) untuk laporan */
 export function formatReportPeriod(value, periodType) {
   if (value == null || value === '') return '-';

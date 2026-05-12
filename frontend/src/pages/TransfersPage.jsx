@@ -11,6 +11,12 @@ import { productService } from '@/services/productService';
 import { branchService } from '@/services/branchService';
 import { useAuth } from '@/contexts/AuthContext';
 import { confirmToast } from '@/utils/confirm';
+import { formatReportDay } from '@/utils/format';
+
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 const branchSelectStyles = {
   control: (base, state) => ({
@@ -47,6 +53,7 @@ export default function TransfersPage() {
   const [branchOptions, setBranchOptions] = useState([]);
   const [selectedToBranch, setSelectedToBranch] = useState(null);
   const [kasirBranchLabel, setKasirBranchLabel] = useState('');
+  const [transferDate, setTransferDate] = useState(todayISO);
 
   useEffect(() => {
     if (!modal.open || modal.mode !== 'create') return;
@@ -60,10 +67,10 @@ export default function TransfersPage() {
         if (cancelled) return;
         if (prRes.success) setProducts(prRes.data || []);
         if (isKasir && user?.branch_id) {
-          const kb = await branchService.list({ limit: 10 });
-          if (!cancelled && kb.success && kb.data?.[0]) {
-            const b = kb.data[0];
-            setKasirBranchLabel(`${b.code} — ${b.name}`);
+          const kb = await branchService.list({ limit: 200 });
+          if (!cancelled && kb.success) {
+            const b = (kb.data || []).find((x) => Number(x.id) === Number(user.branch_id));
+            if (b) setKasirBranchLabel(`${b.code} — ${b.name}`);
           }
         } else if (!isKasir && brRes.success) {
           const opts = (brRes.data || []).map((b) => ({
@@ -83,6 +90,10 @@ export default function TransfersPage() {
     };
   }, [modal.open, modal.mode, isKasir, user?.branch_id]);
 
+  useEffect(() => {
+    if (modal.open && modal.mode === 'create') setTransferDate(todayISO());
+  }, [modal.open, modal.mode]);
+
   const submit = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -93,7 +104,12 @@ export default function TransfersPage() {
       .map((l) => ({ product_id: Number(l.product_id), quantity: Number(l.quantity) }));
     if (!items.length) return toast.error('Tambah minimal satu item');
     try {
-      await transferService.create({ to_branch_id, items, notes: fd.get('notes') || '' });
+      await transferService.create({
+        to_branch_id,
+        items,
+        notes: fd.get('notes') || '',
+        transfer_date: transferDate,
+      });
       toast.success('Pengajuan dikirim');
       setModal({ open: false, mode: 'create' });
       setLines([{ product_id: '', quantity: 1 }]);
@@ -167,6 +183,12 @@ export default function TransfersPage() {
       <DataTable
         columns={[
           { key: 'transfer_number', label: 'No' },
+          {
+            key: 'transfer_date',
+            label: 'Tanggal',
+            sortable: true,
+            render: (row) => <span className="tabular-nums text-slate-800">{formatReportDay(row.transfer_date)}</span>,
+          },
           { key: 'to_branch_name', label: 'Ke cabang' },
           { key: 'status', label: 'Status', sortable: true },
           { key: 'requested_by_name', label: 'Pemohon' },
@@ -219,6 +241,10 @@ export default function TransfersPage() {
             <p>
               Ke cabang: <span className="font-medium text-slate-900">{detail.to_branch_name || `ID ${detail.to_branch_id}`}</span>
             </p>
+            <p>
+              Tanggal transfer:{' '}
+              <span className="font-medium text-slate-900">{formatReportDay(detail.transfer_date)}</span>
+            </p>
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b">
@@ -265,6 +291,18 @@ export default function TransfersPage() {
                 </p>
               </div>
             )}
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600" htmlFor="transfer-date">
+                Tanggal transfer
+              </label>
+              <input
+                id="transfer-date"
+                type="date"
+                value={transferDate}
+                onChange={(e) => setTransferDate(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              />
+            </div>
             <div>
               <label className="text-xs font-medium text-slate-600">Catatan</label>
               <textarea name="notes" rows={2} className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" />
