@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -19,6 +19,7 @@ import {
   BarChart3,
   Clock,
   CalendarClock,
+  Percent,
   Radio,
   Smartphone,
   Banknote,
@@ -26,6 +27,11 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { ROLES } from '@/utils/constants';
 import logoImg from '@/assets/logo.png';
+import { Modal } from '@/components/Modal';
+import { formatCurrency } from '@/utils/format';
+import { productPromoService } from '@/services/productPromoService';
+
+const PROMO_AFTER_LOGIN_FLAG = 'promo_popup_after_login_v1';
 
 const nav = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['super_admin', 'admin_cabang', 'kasir', 'karyawan'] },
@@ -37,6 +43,7 @@ const nav = [
   { to: '/categories', label: 'Kategori', icon: Tags, roles: ['super_admin', 'admin_cabang'] },
   { to: '/units', label: 'Satuan', icon: Ruler, roles: ['super_admin', 'admin_cabang'] },
   { to: '/products', label: 'Produk', icon: Package, roles: ['super_admin', 'admin_cabang'] },
+  { to: '/product-promos', label: 'Promo', icon: Percent, roles: ['super_admin', 'admin_cabang'] },
   { to: '/wallet-channels', label: 'Kanal aplikasi', icon: Radio, roles: ['super_admin', 'admin_cabang'] },
   { to: '/wallet-channel-products', label: 'Produk kanal', icon: Smartphone, roles: ['super_admin', 'admin_cabang'] },
   { to: '/wallet-branch-saldo', label: 'Saldo kanal cabang', icon: Banknote, roles: ['super_admin', 'admin_cabang'] },
@@ -56,13 +63,50 @@ function filterNav(role) {
 export function DashboardLayout() {
   const { user, logout } = useAuth();
   const [open, setOpen] = useState(false);
+  const [promoModalOpen, setPromoModalOpen] = useState(false);
+  const [promosToday, setPromosToday] = useState([]);
   const navigate = useNavigate();
   const items = filterNav(user?.role_slug || '');
+
+  useEffect(() => {
+    const role = user?.role_slug;
+    if (role !== 'kasir' && role !== 'karyawan') return;
+    let show = false;
+    try {
+      show = sessionStorage.getItem(PROMO_AFTER_LOGIN_FLAG) === '1';
+    } catch {
+      /* */
+    }
+    if (!show) return;
+    (async () => {
+      try {
+        const res = await productPromoService.todayPopup();
+        try {
+          sessionStorage.removeItem(PROMO_AFTER_LOGIN_FLAG);
+        } catch {
+          /* */
+        }
+        const list = res?.data?.promos ?? [];
+        if (Array.isArray(list) && list.length) {
+          setPromosToday(list);
+          setPromoModalOpen(true);
+        }
+      } catch {
+        try {
+          sessionStorage.removeItem(PROMO_AFTER_LOGIN_FLAG);
+        } catch {
+          /* */
+        }
+      }
+    })();
+  }, [user?.role_slug, user?.id]);
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
+
+  const closePromoModal = () => setPromoModalOpen(false);
 
   const linkClass = ({ isActive }) =>
     `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${
@@ -137,6 +181,45 @@ export function DashboardLayout() {
       {open && (
         <button type="button" className="fixed inset-0 z-30 bg-slate-900/40 lg:hidden" aria-label="tutup menu" onClick={() => setOpen(false)} />
       )}
+
+      <Modal
+        open={promoModalOpen}
+        title="Promo hari ini"
+        onClose={closePromoModal}
+      >
+        <p className="mb-3 text-sm text-slate-600">
+          Harga POS untuk produk berikut menggunakan harga promo sampai masa berlaku selesai.
+        </p>
+        <div className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
+          {promosToday.map((p) => (
+            <div key={p.id} className="rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2.5 text-sm">
+              <div className="font-semibold text-slate-900">{p.product_name}</div>
+              <div className="mt-1 font-mono text-xs text-slate-500">{p.product_sku}</div>
+              <div className="mt-1.5 tabular-nums text-slate-800">
+                Ecer <strong>{formatCurrency(p.promo_retail_price)}</strong>
+                {' · Grosir '}
+                <strong>
+                  {p.promo_wholesale_price != null && p.promo_wholesale_price !== ''
+                    ? formatCurrency(p.promo_wholesale_price)
+                    : formatCurrency(p.promo_retail_price)}
+                </strong>
+              </div>
+              <div className="mt-1 text-[11px] text-slate-500">
+                {String(p.valid_from || '').slice(0, 10)} s/d {String(p.valid_until || '').slice(0, 10)}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 flex justify-end border-t border-slate-100 pt-3">
+          <button
+            type="button"
+            onClick={closePromoModal}
+            className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white"
+          >
+            Mengerti
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

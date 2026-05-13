@@ -13,6 +13,7 @@ import { formatCurrency, formatDate } from '@/utils/format';
 export default function SalesPage() {
   const { user } = useAuth();
   const canDeleteSale = user?.role_slug === 'super_admin' || user?.role_slug === 'admin_cabang';
+  const staffSelfOnly = user?.role_slug === 'kasir' || user?.role_slug === 'karyawan';
   const fetcher = useCallback((p) => saleService.list(p), []);
   const t = useServerTable(fetcher);
 
@@ -35,7 +36,14 @@ export default function SalesPage() {
 
   return (
     <div>
-      <PageHeader title="Riwayat Transaksi" subtitle="Detail & reprint struk; hapus transaksi (admin) mengembalikan stok jika ada." />
+      <PageHeader
+        title="Riwayat Transaksi"
+        subtitle={
+          staffSelfOnly
+            ? 'Menampilkan transaksi yang diinput dengan akun Anda. Admin cabang dapat melihat seluruh transaksi cabang.'
+            : 'Detail & reprint struk; hapus transaksi (admin) mengembalikan stok jika ada.'
+        }
+      />
       <DataTable
         columns={[
           { key: 'sale_number', label: 'No Invoice', sortable: true },

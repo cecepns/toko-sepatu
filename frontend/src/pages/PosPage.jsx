@@ -393,10 +393,10 @@ export default function PosPage() {
               if (it.kind === 'wallet_product') {
                 const w = it.wcp;
                 return (
-                  <li key={`wcp-${it.wallet_channel_product_id}`} className="flex flex-col gap-2 rounded-xl bg-sky-50 px-3 py-2">
+                  <li key={`wcp-${it.wallet_channel_product_id}`} className="flex flex-col gap-2 rounded-xl bg-brand-50 px-3 py-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-xs font-semibold uppercase text-sky-900">Kanal</div>
+                        <div className="truncate text-xs font-semibold uppercase text-brand-900">Kanal</div>
                         <div className="truncate font-medium text-slate-900">{w?.name}</div>
                       </div>
                       <button type="button" onClick={() => cart.removeWalletItem(it.wallet_channel_product_id)} className="shrink-0 text-red-600">

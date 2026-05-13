@@ -108,9 +108,9 @@ export function DailyShiftReport() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl border border-slate-200 bg-sky-50/80 p-4 text-sm text-slate-800">
-        <p className="font-semibold text-sky-950">Laporan harian operator</p>
-        <ul className="mt-2 list-inside list-disc space-y-1 text-sky-900/90">
+      <div className="rounded-2xl border border-slate-200 bg-brand-50/80 p-4 text-sm text-slate-800">
+        <p className="font-semibold text-brand-950">Laporan harian operator</p>
+        <ul className="mt-2 list-inside list-disc space-y-1 text-brand-900/90">
           <li>
             Penjualan kanal (Simpel / Digipos / Bonafit, dll.) dari <strong>POS</strong>: pilih kanal lalu produk master kanal. Top-up saldo kanal dicatat di menu <strong>Saldo kanal cabang</strong>.
           </li>

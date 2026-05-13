@@ -8,6 +8,7 @@ import UsersPage from '@/pages/UsersPage';
 import CategoriesPage from '@/pages/CategoriesPage';
 import UnitsPage from '@/pages/UnitsPage';
 import ProductsPage from '@/pages/ProductsPage';
+import ProductPromosPage from '@/pages/ProductPromosPage';
 import StockCentralPage from '@/pages/StockCentralPage';
 import StockBranchPage from '@/pages/StockBranchPage';
 import TransfersPage from '@/pages/TransfersPage';
@@ -45,6 +46,7 @@ export default function App() {
         <Route path="categories" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><CategoriesPage /></ProtectedRoute>} />
         <Route path="units" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><UnitsPage /></ProtectedRoute>} />
         <Route path="products" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><ProductsPage /></ProtectedRoute>} />
+        <Route path="product-promos" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><ProductPromosPage /></ProtectedRoute>} />
         <Route path="wallet-channels" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><WalletChannelsPage /></ProtectedRoute>} />
         <Route path="wallet-channel-products" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><WalletChannelProductsPage /></ProtectedRoute>} />
         <Route path="wallet-branch-saldo" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><WalletBranchSaldoPage /></ProtectedRoute>} />

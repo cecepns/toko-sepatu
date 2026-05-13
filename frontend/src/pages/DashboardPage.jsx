@@ -74,12 +74,12 @@ export default function DashboardPage() {
     total: Number(r.total) || 0,
   }));
 
-  const subtitle = staffToday ? 'Transaksi & penjualan hari ini (cabang Anda)' : 'Ringkasan performa & stok';
-  const trxLabel = staffToday ? 'Transaksi hari ini' : 'Transaksi (30 hari)';
-  const revLabel = staffToday ? 'Pendapatan hari ini' : 'Pendapatan (30 hari)';
-  const topProdLabel = staffToday ? 'Produk terlaris (hari ini)' : 'Produk terlaris';
-  const branchLabel = staffToday ? 'Cabang Anda (hari ini)' : 'Cabang terbaik';
-  const chartTitle = staffToday ? 'Penjualan hari ini (per jam)' : 'Grafik penjualan (14 hari)';
+  const subtitle = staffToday ? 'Transaksi & omset hari ini sesuai akun Anda (bukan seluruh cabang)' : 'Ringkasan performa & stok';
+  const trxLabel = staffToday ? 'Transaksi hari ini (akun Anda)' : 'Transaksi (30 hari)';
+  const revLabel = staffToday ? 'Pendapatan hari ini (akun Anda)' : 'Pendapatan (30 hari)';
+  const topProdLabel = staffToday ? 'Produk terlaris (akun Anda, hari ini)' : 'Produk terlaris';
+  const branchLabel = staffToday ? 'Omset cabang Anda (akun ini)' : 'Cabang terbaik';
+  const chartTitle = staffToday ? 'Penjualan akun Anda (hari ini, per jam)' : 'Grafik penjualan (14 hari)';
 
   return (
     <div>
@@ -131,7 +131,7 @@ export default function DashboardPage() {
       </div>
 
       {tom && (
-        <div className="relative mt-6 rounded-2xl border border-brand-200 bg-gradient-to-br from-sky-50 to-white p-5 shadow-sm">
+        <div className="relative mt-6 rounded-2xl border border-brand-200 bg-gradient-to-br from-brand-50 to-white p-5 shadow-sm">
           {omsetRefreshing ? (
             <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-white/60 text-sm font-medium text-slate-600">
               Memuat omset…
@@ -141,9 +141,10 @@ export default function DashboardPage() {
           <p className="mt-1 text-xs text-slate-600">
             Total omset = jumlah yang perlu di-setor (semua kanal). Laba bersih estimasi dari HPP produk.
             {omsetFilters ? ' Filter di bawah hanya memengaruhi blok omset ini.' : ''}
+            {!omsetFilters && staffToday ? ' Hanya menghitung penjualan yang Anda input hari ini.' : ''}
           </p>
           {omsetFilters ? (
-            <div className="mt-3 flex flex-wrap items-end gap-3 rounded-xl border border-sky-200/80 bg-white/70 p-3">
+            <div className="mt-3 flex flex-wrap items-end gap-3 rounded-xl border border-brand-200/80 bg-white/70 p-3">
               {user?.role_slug === 'super_admin' ? (
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-600">Cabang</label>
@@ -204,7 +205,9 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
-          <p className="mt-3 text-xs text-slate-500">Transaksi hari ini (sesuai filter): {tom.trx_count ?? 0}</p>
+          <p className="mt-3 text-xs text-slate-500">
+            {staffToday ? 'Transaksi hari ini (akun Anda)' : 'Transaksi hari ini (sesuai filter)'}: {tom.trx_count ?? 0}
+          </p>
         </div>
       )}
 
@@ -216,15 +219,15 @@ export default function DashboardPage() {
               <AreaChart data={chart}>
                 <defs>
                   <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.35} />
-                    <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#FF202E" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#FF202E" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#94a3b8" />
                 <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
                 <Tooltip formatter={(v) => formatCurrency(v)} />
-                <Area type="monotone" dataKey="total" stroke="#0284c7" fill="url(#g)" strokeWidth={2} />
+                <Area type="monotone" dataKey="total" stroke="#E61E2A" fill="url(#g)" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
           </div>

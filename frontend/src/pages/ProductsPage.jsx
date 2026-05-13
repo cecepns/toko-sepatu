@@ -37,8 +37,8 @@ export default function ProductsPage() {
     if (modal.row) {
       setForm({
         hpp: modal.row.hpp,
-        retail_price: modal.row.retail_price,
-        wholesale_price: modal.row.wholesale_price,
+        retail_price: modal.row.catalog_retail_price ?? modal.row.retail_price,
+        wholesale_price: modal.row.catalog_wholesale_price ?? modal.row.wholesale_price,
         min_wholesale_qty: modal.row.min_wholesale_qty,
       });
     } else {
@@ -117,8 +117,20 @@ export default function ProductsPage() {
           { key: 'sku', label: 'SKU', sortable: true },
           { key: 'name', label: 'Nama', sortable: true },
           { key: 'category_name', label: 'Kategori' },
-          { key: 'retail_price', label: 'Eceran', sortable: true, render: (r) => formatCurrency(r.retail_price) },
-          { key: 'wholesale_price', label: 'Grosir', render: (r) => formatCurrency(r.wholesale_price) },
+          { key: 'retail_price', label: 'Eceran (katalog)', sortable: true, render: (r) => formatCurrency(r.catalog_retail_price ?? r.retail_price) },
+          { key: 'wholesale_price', label: 'Grosir (katalog)', render: (r) => formatCurrency(r.catalog_wholesale_price ?? r.wholesale_price) },
+          {
+            key: 'promo_pos',
+            label: 'Di POS saat promo',
+            render: (r) =>
+              r.has_active_promo ? (
+                <span className="text-xs font-medium text-brand-700">
+                  {formatCurrency(r.retail_price)} / {formatCurrency(r.wholesale_price)}
+                </span>
+              ) : (
+                <span className="text-slate-400">—</span>
+              ),
+          },
           { key: 'margin_percent', label: 'Margin %', render: (r) => `${Number(r.margin_percent || 0).toFixed(1)}%` },
           {
             key: 'a',

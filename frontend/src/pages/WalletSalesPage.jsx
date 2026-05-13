@@ -13,6 +13,7 @@ import { formatCurrency, formatDate } from '@/utils/format';
 export default function WalletSalesPage() {
   const { user } = useAuth();
   const canDeleteSale = user?.role_slug === 'super_admin' || user?.role_slug === 'admin_cabang';
+  const staffSelfOnly = user?.role_slug === 'kasir' || user?.role_slug === 'karyawan';
   const fetcher = useCallback((p) => saleService.list({ ...p, wallet_sale: 1 }), []);
   const t = useServerTable(fetcher);
 
@@ -31,7 +32,14 @@ export default function WalletSalesPage() {
 
   return (
     <div>
-      <PageHeader title="Penjualan kanal aplikasi" subtitle="Transaksi pembayaran saldo kanal; admin dapat menghapus bila salah input." />
+      <PageHeader
+        title="Penjualan kanal aplikasi"
+        subtitle={
+          staffSelfOnly
+            ? 'Hanya transaksi kanal yang Anda input. Admin cabang melihat semua penjualan kanal cabang.'
+            : 'Transaksi pembayaran saldo kanal; admin dapat menghapus bila salah input.'
+        }
+      />
       <DataTable
         columns={[
           { key: 'sale_number', label: 'No Invoice', sortable: true },

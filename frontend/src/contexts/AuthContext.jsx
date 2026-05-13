@@ -35,6 +35,14 @@ export function AuthProvider({ children }) {
     if (!res.success) throw new Error(res.message || 'Login gagal');
     localStorage.setItem('token', res.data.token);
     setUser(res.data.user);
+    const u = res.data.user;
+    if (u?.role_slug === 'kasir' || u?.role_slug === 'karyawan') {
+      try {
+        sessionStorage.setItem('promo_popup_after_login_v1', '1');
+      } catch {
+        /* */
+      }
+    }
     return res.data.user;
   }, []);
 

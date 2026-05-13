@@ -98,6 +98,46 @@ function sqlSingleSaleCogsScalar() {
     WHERE si.sale_id = s.id)`;
 }
 
+/** Satu baris promo aktif per produk (MAX id jika bentrok) — gunakan di JOIN setelah `FROM products p` */
+function sqlActiveProductPromoJoin() {
+  return `
+  LEFT JOIN (
+    SELECT pp.id, pp.product_id, pp.promo_retail_price, pp.promo_wholesale_price, pp.valid_from, pp.valid_until
+    FROM product_promos pp
+    INNER JOIN (
+      SELECT product_id, MAX(id) AS pick_id
+      FROM product_promos
+      WHERE CURDATE() BETWEEN valid_from AND valid_until
+      GROUP BY product_id
+    ) pk ON pk.pick_id = pp.id
+  ) apr ON apr.product_id = p.id `;
+}
+
+/** Ekspresi harga jual efektif (butuh kolom apr.* dari sqlActiveProductPromoJoin + alias produk `p`) */
+function sqlEffectiveProductRetailPrice() {
+  return `CASE WHEN apr.id IS NOT NULL THEN apr.promo_retail_price ELSE p.retail_price END`;
+}
+function sqlEffectiveProductWholesalePrice() {
+  return `CASE WHEN apr.id IS NOT NULL THEN COALESCE(apr.promo_wholesale_price, apr.promo_retail_price) ELSE p.wholesale_price END`;
+}
+
+/** Cegah dua promo aktif/overlap untuk produk sama */
+async function assertPromoNoDateOverlap(poolOrConn, productId, validFrom, validUntil, excludeId = null) {
+  const vf = String(validFrom).slice(0, 10);
+  const vt = String(validUntil).slice(0, 10);
+  if (vf > vt) throw new Error('Tanggal berlaku tidak valid');
+  const params = { pid: productId, vf, vt };
+  let sql =
+    `SELECT id FROM product_promos WHERE product_id=:pid AND NOT (valid_until < :vf OR valid_from > :vt)`;
+  if (excludeId != null && Number(excludeId) > 0) {
+    sql += ' AND id <> :ex ';
+    params.ex = Number(excludeId);
+  }
+  sql += ' LIMIT 1';
+  const [rows] = await poolOrConn.query(sql, params);
+  if (rows.length) throw new Error('Sudah ada promo lain untuk produk ini yang beririsan tanggalnya');
+}
+
 async function isWalletChannelActive(pool, slug) {
   const s = String(slug || '')
     .toLowerCase()
@@ -811,14 +851,31 @@ app.get('/api/products', authMiddleware, async (req, res) => {
       stockSelect = ', COALESCE(sb.quantity, 0) AS branch_stock ';
       params.bid = bid;
     }
+    const promoJoin = sqlActiveProductPromoJoin();
+    const effR = sqlEffectiveProductRetailPrice();
+    const effW = sqlEffectiveProductWholesalePrice();
     const sortCol = ['id', 'name', 'sku', 'retail_price', 'created_at'].includes(sort) ? `p.${sort}` : 'p.id';
     const [rows] = await pool.query(
-      `SELECT SQL_CALC_FOUND_ROWS p.*, c.name AS category_name, u.abbreviation AS unit_abbr,
-              ROUND((p.retail_price - p.hpp) / NULLIF(p.hpp,0) * 100, 2) AS margin_percent
-              ${stockSelect}
+      `SELECT SQL_CALC_FOUND_ROWS
+        p.id, p.category_id, p.unit_id, p.sku, p.name, p.barcode, p.image_url, p.hpp,
+        p.retail_price AS catalog_retail_price,
+        p.wholesale_price AS catalog_wholesale_price,
+        (${effR}) AS retail_price,
+        (${effW}) AS wholesale_price,
+        p.min_wholesale_qty, p.min_stock, p.is_active, p.created_at, p.updated_at,
+        c.name AS category_name,
+        u.abbreviation AS unit_abbr,
+        ROUND((p.retail_price - p.hpp) / NULLIF(p.hpp,0) * 100, 2) AS margin_percent,
+        (apr.id IS NOT NULL) AS has_active_promo,
+        apr.id AS active_promo_id,
+        apr.promo_retail_price AS active_promo_retail,
+        apr.promo_wholesale_price AS active_promo_wholesale,
+        apr.valid_until AS promo_valid_until
+        ${stockSelect}
        FROM products p
        JOIN categories c ON c.id = p.category_id
        JOIN units u ON u.id = p.unit_id
+       ${promoJoin}
        ${stockJoin}
        ${where}
        ORDER BY ${sortCol} ${order}
@@ -835,9 +892,30 @@ app.get('/api/products', authMiddleware, async (req, res) => {
 app.get('/api/products/:id', authMiddleware, async (req, res) => {
   try {
     const id = Number(req.params.id);
+    const promoJoin = sqlActiveProductPromoJoin();
+    const effR = sqlEffectiveProductRetailPrice();
+    const effW = sqlEffectiveProductWholesalePrice();
     const [rows] = await pool.query(
-      `SELECT p.*, c.name AS category_name, u.name AS unit_name, u.abbreviation AS unit_abbr
-       FROM products p JOIN categories c ON c.id=p.category_id JOIN units u ON u.id=p.unit_id WHERE p.id=:id`,
+      `SELECT
+        p.id, p.category_id, p.unit_id, p.sku, p.name, p.barcode, p.image_url, p.hpp,
+        p.retail_price AS catalog_retail_price,
+        p.wholesale_price AS catalog_wholesale_price,
+        (${effR}) AS retail_price,
+        (${effW}) AS wholesale_price,
+        p.min_wholesale_qty, p.min_stock, p.is_active, p.created_at, p.updated_at,
+        c.name AS category_name,
+        u.name AS unit_name,
+        u.abbreviation AS unit_abbr,
+        (apr.id IS NOT NULL) AS has_active_promo,
+        apr.id AS active_promo_id,
+        apr.promo_retail_price AS active_promo_retail,
+        apr.promo_wholesale_price AS active_promo_wholesale,
+        apr.valid_until AS promo_valid_until
+       FROM products p
+       JOIN categories c ON c.id=p.category_id
+       JOIN units u ON u.id=p.unit_id
+       ${promoJoin}
+       WHERE p.id=:id`,
       { id }
     );
     if (!rows[0]) return fail(res, 404, 'Produk tidak ada');
@@ -957,6 +1035,182 @@ app.delete('/api/products/:id', authMiddleware, requireRoles('super_admin', 'adm
     return ok(res, null, 'Produk dihapus');
   } catch (e) {
     return fail(res, 400, 'Tidak dapat menghapus (ada penjualan/stok)');
+  }
+});
+
+/* Promo harga produk (periode tanggal) */
+app.get('/api/product-promos/today-popup', authMiddleware, async (req, res) => {
+  try {
+    if (!['kasir', 'karyawan', 'admin_cabang', 'super_admin'].includes(req.user.role_slug)) {
+      return ok(res, { promos: [] }, '');
+    }
+    const [rows] = await pool.query(
+      `SELECT pr.id, pr.product_id, pr.promo_retail_price, pr.promo_wholesale_price, pr.valid_from, pr.valid_until,
+        p.name AS product_name, p.sku AS product_sku
+       FROM product_promos pr
+       JOIN products p ON p.id = pr.product_id AND p.is_active = 1
+       WHERE CURDATE() BETWEEN pr.valid_from AND pr.valid_until
+       ORDER BY p.name ASC, pr.id DESC`
+    );
+    const promos = rows.map((r) => ({
+      ...r,
+      promo_wholesale_price: r.promo_wholesale_price != null ? Number(r.promo_wholesale_price) : null,
+    }));
+    return ok(res, { promos }, '');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+app.get('/api/product-promos', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const { page, limit, offset, search, sort, order } = parsePagination(req.query);
+    const scope = (req.query.scope || 'all').toString();
+    let extra = '';
+    if (scope === 'running') extra = ' AND CURDATE() BETWEEN pp.valid_from AND pp.valid_until ';
+    else if (scope === 'upcoming') extra = ' AND pp.valid_from > CURDATE() ';
+    else if (scope === 'past') extra = ' AND pp.valid_until < CURDATE() ';
+    const params = { limit, offset };
+    let searchWhere = '';
+    if (search) {
+      searchWhere = ' AND (p.name LIKE :s OR p.sku LIKE :s) ';
+      params.s = `%${search}%`;
+    }
+    const sortCol =
+      sort === 'product_name'
+        ? 'p.name'
+        : sort === 'valid_from'
+          ? 'pp.valid_from'
+          : sort === 'valid_until'
+            ? 'pp.valid_until'
+            : 'pp.id';
+    const [rows] = await pool.query(
+      `SELECT SQL_CALC_FOUND_ROWS pp.*,
+        p.name AS product_name,
+        p.sku AS product_sku,
+        p.retail_price AS catalog_retail_price,
+        p.wholesale_price AS catalog_wholesale_price,
+        CASE
+          WHEN CURDATE() BETWEEN pp.valid_from AND pp.valid_until THEN 'running'
+          WHEN pp.valid_from > CURDATE() THEN 'upcoming'
+          ELSE 'ended'
+        END AS status
+       FROM product_promos pp
+       JOIN products p ON p.id = pp.product_id
+       WHERE 1=1 ${extra} ${searchWhere}
+       ORDER BY ${sortCol} ${order}
+       LIMIT :limit OFFSET :offset`,
+      params
+    );
+    const [[{ total }]] = await pool.query('SELECT FOUND_ROWS() as total');
+    return ok(res, rows, '', { page, limit, total, totalPages: Math.ceil(total / limit) || 1 });
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+app.post('/api/product-promos', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const { product_id, promo_retail_price, promo_wholesale_price, valid_from, valid_until } = req.body || {};
+    const pid = Number(product_id);
+    const pr = Number(promo_retail_price);
+    if (!pid || Number.isNaN(pr) || pr < 0) return fail(res, 400, 'Produk dan harga promo ecer wajib valid');
+    const vf = String(valid_from || '').slice(0, 10);
+    const vt = String(valid_until || '').slice(0, 10);
+    if (!vf || !vt || !/^\d{4}-\d{2}-\d{2}$/.test(vf) || !/^\d{4}-\d{2}-\d{2}$/.test(vt)) {
+      return fail(res, 400, 'Tanggal berlaku tidak valid');
+    }
+    let pwh = null;
+    if (promo_wholesale_price !== undefined && promo_wholesale_price !== null && String(promo_wholesale_price).trim() !== '') {
+      pwh = Number(promo_wholesale_price);
+      if (Number.isNaN(pwh) || pwh < 0) return fail(res, 400, 'Harga promo grosir tidak valid');
+    }
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [exist] = await conn.query(`SELECT id FROM products WHERE id=:id LIMIT 1`, { id: pid });
+      if (!exist[0]) {
+        await conn.rollback();
+        return fail(res, 404, 'Produk tidak ada');
+      }
+      await assertPromoNoDateOverlap(conn, pid, vf, vt);
+      const [ins] = await conn.query(
+        `INSERT INTO product_promos (product_id, promo_retail_price, promo_wholesale_price, valid_from, valid_until)
+         VALUES (:pid, :pr, :pw, :vf, :vt)`,
+        { pid, pr, pw: pwh, vf, vt }
+      );
+      await conn.commit();
+      return ok(res, { id: ins.insertId }, 'Promo dibuat');
+    } catch (e) {
+      await conn.rollback();
+      if (e.message && e.message.includes('promo')) return fail(res, 400, e.message);
+      throw e;
+    } finally {
+      conn.release();
+    }
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+app.put('/api/product-promos/:id', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return fail(res, 400, 'ID tidak valid');
+    const { product_id, promo_retail_price, promo_wholesale_price, valid_from, valid_until } = req.body || {};
+    const pid = Number(product_id);
+    const pr = Number(promo_retail_price);
+    if (!pid || Number.isNaN(pr) || pr < 0) return fail(res, 400, 'Produk dan harga promo ecer wajib valid');
+    const vf = String(valid_from || '').slice(0, 10);
+    const vt = String(valid_until || '').slice(0, 10);
+    if (!vf || !vt || !/^\d{4}-\d{2}-\d{2}$/.test(vf) || !/^\d{4}-\d{2}-\d{2}$/.test(vt)) {
+      return fail(res, 400, 'Tanggal berlaku tidak valid');
+    }
+    let pwh = null;
+    if (promo_wholesale_price !== undefined && promo_wholesale_price !== null && String(promo_wholesale_price).trim() !== '') {
+      pwh = Number(promo_wholesale_price);
+      if (Number.isNaN(pwh) || pwh < 0) return fail(res, 400, 'Harga promo grosir tidak valid');
+    }
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [cur] = await conn.query(`SELECT id FROM product_promos WHERE id=:id LIMIT 1 FOR UPDATE`, { id });
+      if (!cur[0]) {
+        await conn.rollback();
+        return fail(res, 404, 'Promo tidak ada');
+      }
+      const [exist] = await conn.query(`SELECT id FROM products WHERE id=:id LIMIT 1`, { id: pid });
+      if (!exist[0]) {
+        await conn.rollback();
+        return fail(res, 404, 'Produk tidak ada');
+      }
+      await assertPromoNoDateOverlap(conn, pid, vf, vt, id);
+      await conn.query(
+        `UPDATE product_promos SET product_id=:pid, promo_retail_price=:pr, promo_wholesale_price=:pw, valid_from=:vf, valid_until=:vt WHERE id=:id`,
+        { id, pid, pr, pw: pwh, vf, vt }
+      );
+      await conn.commit();
+      return ok(res, { id }, 'Promo diperbarui');
+    } catch (e) {
+      await conn.rollback();
+      if (e.message && e.message.includes('promo')) return fail(res, 400, e.message);
+      throw e;
+    } finally {
+      conn.release();
+    }
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+app.delete('/api/product-promos/:id', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [r] = await pool.query(`DELETE FROM product_promos WHERE id=:id`, { id });
+    if (!r.affectedRows) return fail(res, 404, 'Promo tidak ada');
+    return ok(res, null, 'Promo dihapus');
+  } catch (e) {
+    return fail(res, 500, e.message);
   }
 });
 
@@ -1773,8 +2027,13 @@ app.post('/api/sales', authMiddleware, requireRoles('super_admin', 'admin_cabang
         lineRows.push({ kind: 'wallet', wallet_channel_product_id: wcp.id, qty, unit, lineSub, isWh: 0 });
       } else {
         hasStock = true;
+        const promoJoin = sqlActiveProductPromoJoin();
+        const effR = sqlEffectiveProductRetailPrice();
+        const effW = sqlEffectiveProductWholesalePrice();
         const [pr] = await conn.query(
-          `SELECT id, retail_price, wholesale_price, min_wholesale_qty, is_active FROM products WHERE id=:id FOR UPDATE`,
+          `SELECT p.id, (${effR}) AS retail_price, (${effW}) AS wholesale_price, p.min_wholesale_qty, p.is_active
+           FROM products p ${promoJoin}
+           WHERE p.id=:id FOR UPDATE`,
           { id: pid }
         );
         const p = pr[0];
@@ -1893,7 +2152,10 @@ app.get('/api/sales', authMiddleware, async (req, res) => {
     const { page, limit, offset, search, sort, order } = parsePagination(req.query);
     let where = ' WHERE 1=1 ';
     const params = {};
-    if (req.user.role_slug === 'karyawan') return fail(res, 403, 'Akses ditolak');
+    if (req.user.role_slug === 'kasir' || req.user.role_slug === 'karyawan') {
+      where += ' AND s.cashier_user_id = :cashierSelf ';
+      params.cashierSelf = req.user.id;
+    }
     if (req.user.role_slug !== 'super_admin') {
       where += ' AND s.branch_id = :bid ';
       params.bid = req.user.branch_id;
@@ -1940,6 +2202,12 @@ app.get('/api/sales/:id', authMiddleware, async (req, res) => {
     if (req.user.role_slug !== 'super_admin' && Number(s[0].branch_id) !== Number(req.user.branch_id)) {
       return fail(res, 403, 'Akses ditolak');
     }
+    if (
+      (req.user.role_slug === 'kasir' || req.user.role_slug === 'karyawan') &&
+      Number(s[0].cashier_user_id) !== Number(req.user.id)
+    ) {
+      return fail(res, 403, 'Akses ditolak');
+    }
     const [items] = await pool.query(
       `SELECT si.*,
         COALESCE(p.name, wcp.name) AS product_name,
@@ -1961,6 +2229,14 @@ app.get('/api/sales/:id', authMiddleware, async (req, res) => {
 app.patch('/api/sales/:id/printed', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
   try {
     const id = Number(req.params.id);
+    const [rows] = await pool.query(`SELECT id, branch_id, cashier_user_id FROM sales WHERE id=:id`, { id });
+    if (!rows[0]) return fail(res, 404, 'Transaksi tidak ada');
+    if (req.user.role_slug !== 'super_admin' && Number(rows[0].branch_id) !== Number(req.user.branch_id)) {
+      return fail(res, 403, 'Akses ditolak');
+    }
+    if (req.user.role_slug === 'kasir' && Number(rows[0].cashier_user_id) !== Number(req.user.id)) {
+      return fail(res, 403, 'Akses ditolak');
+    }
     await pool.query(`UPDATE sales SET printed_at=NOW() WHERE id=:id`, { id });
     return ok(res, { id }, 'Status cetak diperbarui');
   } catch (e) {
@@ -2175,25 +2451,30 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
       branchClause = ' AND branch_id = :bid ';
       params.bid = req.user.branch_id;
     }
+    const cashierClause = staffToday ? ' AND cashier_user_id = :staffSelf ' : '';
+    if (staffToday) params.staffSelf = req.user.id;
     const salesDateClause = staffToday ? ' AND DATE(created_at) = CURDATE() ' : ' AND created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) ';
     const [salesAgg] = await pool.query(
-      `SELECT COUNT(*) AS cnt, COALESCE(SUM(grand_total),0) AS revenue FROM sales WHERE 1=1 ${branchClause} ${salesDateClause}`,
+      `SELECT COUNT(*) AS cnt, COALESCE(SUM(grand_total),0) AS revenue FROM sales WHERE 1=1 ${branchClause} ${salesDateClause} ${cashierClause}`,
       params
     );
     const [topProducts] = await pool.query(
       `SELECT p.name, SUM(si.quantity) AS qty FROM sale_items si
        JOIN sales s ON s.id = si.sale_id JOIN products p ON p.id = si.product_id
        WHERE 1=1 ${branchClause} ${salesDateClause.replace('created_at', 's.created_at')}
+       ${staffToday ? ' AND s.cashier_user_id = :staffSelf ' : ''}
        GROUP BY p.id ORDER BY qty DESC LIMIT 5`,
       params
     );
     let topBranches;
     if (staffToday && req.user.branch_id) {
+      const tbParams = { bid: req.user.branch_id, staffSelf: req.user.id };
       const [tb] = await pool.query(
         `SELECT b.name, COALESCE(SUM(s.grand_total),0) AS revenue FROM branches b
          LEFT JOIN sales s ON s.branch_id = b.id AND DATE(s.created_at) = CURDATE()
+           AND s.cashier_user_id = :staffSelf
          WHERE b.id = :bid GROUP BY b.id, b.name`,
-        { bid: req.user.branch_id }
+        tbParams
       );
       topBranches = tb;
     } else {
@@ -2215,7 +2496,7 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
     if (staffToday) {
       const [hr] = await pool.query(
         `SELECT HOUR(created_at) AS h, SUM(grand_total) AS total FROM sales WHERE 1=1 ${branchClause}
-         AND DATE(created_at) = CURDATE() GROUP BY HOUR(created_at) ORDER BY h`,
+         AND DATE(created_at) = CURDATE() ${cashierClause} GROUP BY HOUR(created_at) ORDER BY h`,
         params
       );
       series = hr;
@@ -2227,7 +2508,7 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
       );
       series = s2;
     }
-    /* Omset hari ini — filter cabang / kasir (super & admin cabang); kasir/karyawan = seluruh omset cabang hari ini */
+    /* Omset hari ini — admin: filter cabang/kasir opsional; kasir/karyawan = omset akun sendiri hari ini */
     let omsetBid = null;
     let omsetCid = null;
     const qTodayBranch = req.query.today_branch_id != null && req.query.today_branch_id !== '' ? Number(req.query.today_branch_id) : null;
@@ -2252,7 +2533,7 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
       }
     } else if (staffToday && req.user.branch_id) {
       omsetBid = Number(req.user.branch_id);
-      omsetCid = null;
+      omsetCid = Number(req.user.id);
     }
 
     let omsetWhereExtra = '';

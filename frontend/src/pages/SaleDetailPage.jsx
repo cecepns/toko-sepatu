@@ -66,7 +66,7 @@ export default function SaleDetailPage() {
           <h1 className="text-2xl font-bold text-slate-900">{row.sale_number}</h1>
           <p className="text-sm text-slate-600">{formatDate(row.created_at)} · {row.branch_name}</p>
         {row.payments?.[0]?.wallet_channel ? (
-          <p className="mt-1 text-xs font-medium text-sky-800">Kanal aplikasi: {row.payments[0].wallet_channel}</p>
+          <p className="mt-1 text-xs font-medium text-brand-800">Kanal aplikasi: {row.payments[0].wallet_channel}</p>
         ) : null}
         </div>
         <button type="button" onClick={print} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white">

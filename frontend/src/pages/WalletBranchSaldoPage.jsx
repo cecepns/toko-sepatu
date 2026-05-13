@@ -247,9 +247,9 @@ export default function WalletBranchSaldoPage() {
             {sumLoading ? '…' : formatCurrency(Number(summary?.total_sale_modal ?? 0))}
           </p>
         </div>
-        <div className="rounded-2xl border border-sky-200 bg-sky-50/80 p-4">
-          <p className="text-xs font-medium text-sky-900">Sisa saldo (estimasi)</p>
-          <p className="mt-1 text-lg font-bold text-sky-950">
+        <div className="rounded-2xl border border-brand-200 bg-brand-50/80 p-4">
+          <p className="text-xs font-medium text-brand-900">Sisa saldo (estimasi)</p>
+          <p className="mt-1 text-lg font-bold text-brand-950">
             {sumLoading ? '…' : formatCurrency(Number(summary?.balance_estimate ?? 0))}
           </p>
         </div>
