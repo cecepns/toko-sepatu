@@ -5,4 +5,5 @@ export const saleService = {
   get: (id) => api.get(`/api/sales/${id}`).then((r) => r.data),
   create: (body) => api.post('/api/sales', body).then((r) => r.data),
   printed: (id) => api.patch(`/api/sales/${id}/printed`).then((r) => r.data),
+  remove: (id) => api.delete(`/api/sales/${id}`).then((r) => r.data),
 };

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Plus, Pencil } from 'lucide-react';
+import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { Modal } from '@/components/Modal';
 import { walletChannelService } from '@/services/walletChannelService';
@@ -109,6 +109,17 @@ export default function WalletChannelProductsPage() {
     }
   };
 
+  const remove = async (row) => {
+    if (!window.confirm(`Hapus produk kanal "${row.name}"? Tidak bisa dihapus jika sudah pernah muncul di transaksi penjualan.`)) return;
+    try {
+      await walletChannelService.deleteProduct(row.id);
+      toast.success('Produk dihapus');
+      load();
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
+
   const chLabel = channels.find((c) => String(c.id) === channelId)?.label || '';
 
   return (
@@ -147,7 +158,7 @@ export default function WalletChannelProductsPage() {
               <th className="px-3 py-3">Modal default</th>
               <th className="px-3 py-3">Harga jual default</th>
               <th className="px-3 py-3">Status</th>
-              <th className="px-3 py-3" />
+              <th className="px-3 py-3 text-right">Aksi</th>
             </tr>
           </thead>
           <tbody>
@@ -165,12 +176,17 @@ export default function WalletChannelProductsPage() {
                   <td className="px-3 py-2.5 tabular-nums">{formatCurrency(Number(r.default_sale_price))}</td>
                   <td className="px-3 py-2.5">{r.is_active ? <span className="text-emerald-700">Aktif</span> : <span className="text-slate-500">Off</span>}</td>
                   <td className="px-3 py-2.5">
-                    <button type="button" onClick={() => setModal({ open: true, row: r })} className="text-brand-600 hover:underline">
-                      <Pencil className="mr-1 inline h-3.5 w-3.5" /> Edit
-                    </button>
-                    <button type="button" onClick={() => toggle(r)} className="ml-3 text-slate-600 hover:underline">
-                      {r.is_active ? 'Nonaktifkan' : 'Aktifkan'}
-                    </button>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <button type="button" onClick={() => setModal({ open: true, row: r })} className="text-brand-600 hover:underline">
+                        <Pencil className="mr-1 inline h-3.5 w-3.5" /> Edit
+                      </button>
+                      <button type="button" onClick={() => toggle(r)} className="text-slate-600 hover:underline">
+                        {r.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                      </button>
+                      <button type="button" onClick={() => remove(r)} className="text-red-600 hover:underline" title="Hapus permanen">
+                        <Trash2 className="mr-1 inline h-3.5 w-3.5" /> Hapus
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))

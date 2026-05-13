@@ -83,6 +83,7 @@ function rowsForSheet(tab, period, rows) {
     Karyawan: r.full_name,
     Kode: r.employee_code,
     Cabang: r.branch_name,
+    Shift: r.shift_name || '—',
     Masuk: formatExportDate(r.clock_in_at),
     Keluar: r.clock_out_at ? formatExportDate(r.clock_out_at) : '-',
     Status: r.status,
@@ -130,6 +131,7 @@ function reportColumns(tab, period) {
     { key: 'full_name', label: 'Nama', render: (r) => r.full_name },
     { key: 'employee_code', label: 'Kode', render: (r) => <span className="font-mono text-xs">{r.employee_code}</span> },
     { key: 'branch_name', label: 'Cabang', render: (r) => r.branch_name },
+    { key: 'shift_name', label: 'Shift', render: (r) => r.shift_name || '—' },
     { key: 'clock_in_at', label: 'Masuk', render: (r) => formatExportDate(r.clock_in_at) },
     { key: 'clock_out_at', label: 'Keluar', render: (r) => (r.clock_out_at ? formatExportDate(r.clock_out_at) : '—') },
     { key: 'status', label: 'Status', render: (r) => r.status },
@@ -292,11 +294,12 @@ export default function ReportsPage() {
       head = [['Cabang', 'SKU', 'Produk', 'Qty', 'Pendapatan']];
       body = rows.slice(0, 40).map((r) => [r.branch_name ?? String(r.branch_id), r.sku, r.name, r.qty_sold, formatCurrency(r.revenue)]);
     } else {
-      head = [['Nama', 'Kode', 'Cabang', 'Masuk', 'Keluar', 'Status']];
+      head = [['Nama', 'Kode', 'Cabang', 'Shift', 'Masuk', 'Keluar', 'Status']];
       body = rows.slice(0, 40).map((r) => [
         r.full_name,
         r.employee_code,
         r.branch_name,
+        r.shift_name || '—',
         formatExportDate(r.clock_in_at),
         r.clock_out_at ? formatExportDate(r.clock_out_at) : '-',
         r.status,

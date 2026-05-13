@@ -16,6 +16,7 @@ import SalesPage from '@/pages/SalesPage';
 import SaleDetailPage from '@/pages/SaleDetailPage';
 import ResellersPage from '@/pages/ResellersPage';
 import AttendancePage from '@/pages/AttendancePage';
+import WorkShiftsPage from '@/pages/WorkShiftsPage';
 import ReportsPage from '@/pages/ReportsPage';
 import WalletChannelsPage from '@/pages/WalletChannelsPage';
 import WalletChannelProductsPage from '@/pages/WalletChannelProductsPage';
@@ -52,6 +53,7 @@ export default function App() {
         <Route path="transfers" element={<ProtectedRoute roles={['super_admin', 'admin_cabang', 'kasir']}><TransfersPage /></ProtectedRoute>} />
         <Route path="resellers" element={<ProtectedRoute roles={['super_admin', 'admin_cabang', 'kasir']}><ResellersPage /></ProtectedRoute>} />
         <Route path="attendance" element={<ProtectedRoute roles={['super_admin', 'admin_cabang', 'karyawan', 'kasir']}><AttendancePage /></ProtectedRoute>} />
+        <Route path="work-shifts" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><WorkShiftsPage /></ProtectedRoute>} />
         <Route path="reports" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><ReportsPage /></ProtectedRoute>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

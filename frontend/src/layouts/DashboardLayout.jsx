@@ -18,6 +18,7 @@ import {
   X,
   BarChart3,
   Clock,
+  CalendarClock,
   Radio,
   Smartphone,
   Banknote,
@@ -44,6 +45,7 @@ const nav = [
   { to: '/transfers', label: 'Transfer Stok', icon: ArrowLeftRight, roles: ['super_admin', 'admin_cabang', 'kasir'] },
   { to: '/resellers', label: 'Reseller', icon: Users, roles: ['super_admin', 'admin_cabang', 'kasir'] },
   { to: '/attendance', label: 'Absensi', icon: Clock, roles: ['super_admin', 'admin_cabang', 'karyawan', 'kasir'] },
+  { to: '/work-shifts', label: 'Shift kerja', icon: CalendarClock, roles: ['super_admin', 'admin_cabang'] },
   { to: '/reports', label: 'Laporan', icon: BarChart3, roles: ['super_admin', 'admin_cabang'] },
 ];
 

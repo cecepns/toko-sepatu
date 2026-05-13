@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { MapPin, LogIn, LogOut } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
@@ -7,10 +7,31 @@ import { useServerTable } from '@/hooks/useServerTable';
 import { attendanceService } from '@/services/attendanceService';
 import { formatDate } from '@/utils/format';
 
+function fmtTime(t) {
+  if (!t) return '—';
+  const s = String(t);
+  return s.length >= 5 ? s.slice(0, 5) : s;
+}
+
 export default function AttendancePage() {
   const fetcher = useCallback((p) => attendanceService.list(p), []);
   const t = useServerTable(fetcher);
   const [gps, setGps] = useState({ lat: '', lng: '' });
+  const [ctx, setCtx] = useState(null);
+
+  const loadCtx = useCallback(async () => {
+    try {
+      const res = await attendanceService.context();
+      if (res.success) setCtx(res.data);
+      else setCtx(null);
+    } catch {
+      setCtx(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCtx();
+  }, [loadCtx]);
 
   const locate = () => {
     if (!navigator.geolocation) return toast.error('Browser tidak mendukung GPS');
@@ -31,6 +52,7 @@ export default function AttendancePage() {
       if (!res.success) throw new Error(res.message);
       toast.success(`Clock in — ${res.data.status}`);
       t.reload();
+      loadCtx();
     } catch (e) {
       toast.error(e.message);
     }
@@ -43,14 +65,45 @@ export default function AttendancePage() {
       if (!res.success) throw new Error(res.message);
       toast.success('Clock out berhasil');
       t.reload();
+      loadCtx();
     } catch (e) {
       toast.error(e.message);
     }
   };
 
+  const shift = ctx?.shift;
+  const hasInactive = shift && shift.inactive;
+
   return (
     <div>
-      <PageHeader title="Absensi" subtitle="Clock in/out dengan validasi radius GPS cabang" />
+      <PageHeader title="Absensi" subtitle="Clock in/out dengan radius GPS cabang — waktu mengikuti shift Anda." />
+
+      {ctx?.employee && (
+        <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800">
+          {hasInactive ? (
+            <p className="font-medium text-amber-800">{shift.message}</p>
+          ) : shift?.name ? (
+            <div className="space-y-1">
+              <p>
+                <span className="text-slate-600">Shift:</span>{' '}
+                <span className="font-semibold text-slate-900">{shift.name}</span>
+              </p>
+              <p className="text-xs text-slate-600">
+                Jam masuk (acuan): <strong>{fmtTime(shift.time_in)}</strong> · toleransi telat:{' '}
+                <strong>{shift.grace_in_minutes ?? 0} menit</strong> · jam keluar: <strong>{fmtTime(shift.time_out)}</strong>
+              </p>
+              {ctx.open_attendance ? (
+                <p className="text-xs text-emerald-800">Sesi hari ini sudah clock in — silakan clock out saat selesai.</p>
+              ) : (
+                <p className="text-xs text-slate-600">Belum clock in hari ini.</p>
+              )}
+            </div>
+          ) : (
+            <p className="text-amber-800">Shift belum ditetapkan untuk akun Anda. Hubungi admin cabang.</p>
+          )}
+        </div>
+      )}
+
       <div className="mb-6 grid gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-3">
         <div className="sm:col-span-2">
           <p className="text-sm font-medium text-slate-700">Koordinat</p>
@@ -75,6 +128,7 @@ export default function AttendancePage() {
           { key: 'employee_code', label: 'Kode' },
           { key: 'full_name', label: 'Nama' },
           { key: 'branch_name', label: 'Cabang' },
+          { key: 'shift_name', label: 'Shift', render: (r) => r.shift_name || '—' },
           { key: 'clock_in_at', label: 'Masuk', sortable: true, render: (r) => formatDate(r.clock_in_at) },
           { key: 'clock_out_at', label: 'Keluar', render: (r) => (r.clock_out_at ? formatDate(r.clock_out_at) : '-') },
           { key: 'status', label: 'Status', sortable: true },

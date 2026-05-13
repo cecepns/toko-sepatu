@@ -7,4 +7,5 @@ export const walletChannelService = {
   listProducts: (params) => api.get('/api/wallet-channel-products', { params }).then((r) => r.data),
   createProduct: (body) => api.post('/api/wallet-channel-products', body).then((r) => r.data),
   updateProduct: (id, body) => api.put(`/api/wallet-channel-products/${id}`, body).then((r) => r.data),
+  deleteProduct: (id) => api.delete(`/api/wallet-channel-products/${id}`).then((r) => r.data),
 };

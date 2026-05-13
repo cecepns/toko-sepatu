@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { branchService } from '@/services/branchService';
 import { walletChannelService } from '@/services/walletChannelService';
 import { reportService } from '@/services/reportService';
+import { saleService } from '@/services/saleService';
 import { formatCurrency } from '@/utils/format';
 
 function todayISO() {
@@ -30,6 +31,7 @@ export default function WalletBranchSaldoPage() {
   const [actMeta, setActMeta] = useState({ total: 0, totalPages: 1 });
   const limit = 15;
   const [topupForm, setTopupForm] = useState({ topup_date: todayISO(), amount: '', notes: '' });
+  const [deletingKey, setDeletingKey] = useState(null);
 
   useEffect(() => {
     if (!isSuper) return;
@@ -135,6 +137,41 @@ export default function WalletBranchSaldoPage() {
       loadActivity();
     } catch (err) {
       toast.error(err.message);
+    }
+  };
+
+  const deleteActivityRow = async (r) => {
+    const rowKey = `${r.kind}-${r.ref_id}`;
+    const kindLabel = r.kind === 'topup' ? 'top-up' : r.kind === 'manual' ? 'input manual' : 'penjualan';
+    if (
+      !window.confirm(
+        `Hapus baris ${kindLabel} ini?${r.kind === 'sale' ? ' Transaksi penjualan akan dibatalkan; stok cabang dikembalikan untuk baris produk stok (jika ada).' : ' Tindakan tidak bisa dibatalkan.'}`
+      )
+    ) {
+      return;
+    }
+    setDeletingKey(rowKey);
+    try {
+      if (r.kind === 'topup') {
+        await reportService.deleteWalletTopup(r.ref_id);
+      } else if (r.kind === 'manual') {
+        await reportService.deleteWalletManualLine(r.ref_id);
+      } else if (r.kind === 'sale') {
+        const sid = r.sale_id ?? r.ref_id;
+        await saleService.remove(sid);
+      } else {
+        toast.error('Tipe baris tidak didukung');
+        return;
+      }
+      toast.success('Berhasil dihapus');
+      loadSummary();
+      const onlyRowOnPage = activity.length === 1;
+      if (onlyRowOnPage && page > 1) setPage((p) => Math.max(1, p - 1));
+      else loadActivity();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setDeletingKey(null);
     }
   };
 
@@ -287,7 +324,7 @@ export default function WalletBranchSaldoPage() {
                 <th className="px-3 py-2">Keterangan</th>
                 <th className="px-3 py-2 text-right">Masuk</th>
                 <th className="px-3 py-2 text-right">Keluar (est.)</th>
-                <th className="px-3 py-2" />
+                <th className="px-3 py-2 text-right">Aksi</th>
               </tr>
             </thead>
             <tbody>
@@ -312,13 +349,21 @@ export default function WalletBranchSaldoPage() {
                       {Number(r.amount_out) > 0 ? formatCurrency(Number(r.amount_out)) : '—'}
                     </td>
                     <td className="px-3 py-2 text-right">
-                      {r.kind === 'sale' && r.sale_id ? (
-                        <Link to={`/sales/${r.sale_id}`} className="text-brand-600 hover:underline">
-                          Detail
-                        </Link>
-                      ) : (
-                        '—'
-                      )}
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        {r.kind === 'sale' && r.sale_id ? (
+                          <Link to={`/sales/${r.sale_id}`} className="text-brand-600 hover:underline">
+                            Detail
+                          </Link>
+                        ) : null}
+                        <button
+                          type="button"
+                          disabled={deletingKey === `${r.kind}-${r.ref_id}`}
+                          onClick={() => deleteActivityRow(r)}
+                          className="text-red-600 hover:underline disabled:opacity-50"
+                        >
+                          Hapus
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))

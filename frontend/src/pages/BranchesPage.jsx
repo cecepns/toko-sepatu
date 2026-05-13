@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { MapPin, Pencil, Plus } from 'lucide-react';
+import { MapPin, Pencil, Plus, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
 import { Modal } from '@/components/Modal';
@@ -70,6 +70,23 @@ export default function BranchesPage() {
     }
   };
 
+  const removeBranch = async (row) => {
+    if (
+      !window.confirm(
+        `Hapus cabang "${row.name}" (${row.code})? Stok, absensi, dan data terkait cabang ini akan ikut terhapus dari database. Pastikan tidak ada penjualan dan pengguna yang masih terikat ke cabang ini.`
+      )
+    ) {
+      return;
+    }
+    try {
+      await branchService.remove(row.id);
+      toast.success('Cabang dihapus');
+      t.reload();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
   return (
     <div>
       <PageHeader
@@ -95,12 +112,17 @@ export default function BranchesPage() {
           { key: 'status', label: 'Status', sortable: true },
           {
             key: 'actions',
-            label: '',
+            label: 'Aksi',
             render: (row) =>
               isSuper ? (
-                <button type="button" className="text-brand-600 hover:text-brand-800" onClick={() => setModal({ open: true, row })}>
-                  <Pencil className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button type="button" className="text-brand-600 hover:text-brand-800" title="Edit" onClick={() => setModal({ open: true, row })}>
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                  <button type="button" className="text-red-600 hover:text-red-800" title="Hapus cabang" onClick={() => removeBranch(row)}>
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
               ) : null,
           },
         ]}
