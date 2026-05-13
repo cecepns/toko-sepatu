@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { iconActionDelete, iconActionEdit } from '@/utils/iconActionButton';
 import { PageHeader } from '@/components/PageHeader';
 import { Modal } from '@/components/Modal';
 import { useAuth } from '@/contexts/AuthContext';
@@ -171,12 +172,14 @@ export default function WorkShiftsPage() {
                   <td className="px-3 py-2.5 tabular-nums">{r.grace_in_minutes ?? 0}</td>
                   <td className="px-3 py-2.5">{r.is_active ? <span className="text-emerald-700">Aktif</span> : <span className="text-slate-500">Off</span>}</td>
                   <td className="px-3 py-2.5 text-right">
-                    <button type="button" onClick={() => setModal({ open: true, row: r })} className="text-brand-600 hover:underline">
-                      <Pencil className="mr-1 inline h-3.5 w-3.5" /> Edit
-                    </button>
-                    <button type="button" onClick={() => remove(r)} className="ml-3 text-red-600 hover:underline">
-                      <Trash2 className="mr-1 inline h-3.5 w-3.5" /> Hapus
-                    </button>
+                    <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
+                      <button type="button" title="Ubah" onClick={() => setModal({ open: true, row: r })} className={iconActionEdit}>
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button type="button" title="Hapus shift" onClick={() => remove(r)} className={iconActionDelete}>
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))

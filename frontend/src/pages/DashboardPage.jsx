@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { TrendingUp, Wallet, Package, Building2 } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { dashboardService } from '@/services/dashboardService';
 import { formatCurrency } from '@/utils/format';
 import toast from 'react-hot-toast';
+import { useAuth } from '@/contexts/AuthContext';
 
 function chartLabel(row, staffToday) {
   if (staffToday && row.h != null) {
@@ -15,22 +16,41 @@ function chartLabel(row, staffToday) {
 }
 
 export default function DashboardPage() {
+  const { user } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [omsetRefreshing, setOmsetRefreshing] = useState(false);
+  const [omsetBranchId, setOmsetBranchId] = useState('');
+  const [omsetCashierId, setOmsetCashierId] = useState('');
+  const firstLoad = useRef(true);
+
+  const loadSummary = useCallback(async () => {
+    try {
+      if (!firstLoad.current) setOmsetRefreshing(true);
+      const params = {};
+      if (user?.role_slug === 'super_admin') {
+        if (omsetBranchId) params.today_branch_id = Number(omsetBranchId);
+        if (omsetCashierId) params.today_cashier_id = Number(omsetCashierId);
+      } else if (user?.role_slug === 'admin_cabang') {
+        if (omsetCashierId) params.today_cashier_id = Number(omsetCashierId);
+      }
+      const res = await dashboardService.summary(params);
+      if (res.success) setData(res.data);
+      else toast.error(res.message);
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      if (firstLoad.current) {
+        setLoading(false);
+        firstLoad.current = false;
+      }
+      setOmsetRefreshing(false);
+    }
+  }, [user?.role_slug, omsetBranchId, omsetCashierId]);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await dashboardService.summary();
-        if (res.success) setData(res.data);
-        else toast.error(res.message);
-      } catch (e) {
-        toast.error(e.message);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+    loadSummary();
+  }, [loadSummary]);
 
   if (loading) {
     return (
@@ -48,6 +68,7 @@ export default function DashboardPage() {
   const staffToday = data?.scope === 'staff_today';
   const s = data?.sales_30d;
   const tom = data?.today_omset;
+  const omsetFilters = data?.today_omset_filters;
   const chart = (data?.chart_sales || []).map((r) => ({
     name: chartLabel(r, staffToday),
     total: Number(r.total) || 0,
@@ -110,11 +131,56 @@ export default function DashboardPage() {
       </div>
 
       {tom && (
-        <div className="mt-6 rounded-2xl border border-brand-200 bg-gradient-to-br from-sky-50 to-white p-5 shadow-sm">
+        <div className="relative mt-6 rounded-2xl border border-brand-200 bg-gradient-to-br from-sky-50 to-white p-5 shadow-sm">
+          {omsetRefreshing ? (
+            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-white/60 text-sm font-medium text-slate-600">
+              Memuat omset…
+            </div>
+          ) : null}
           <h3 className="text-sm font-semibold text-slate-900">Omset hari ini (per kanal)</h3>
           <p className="mt-1 text-xs text-slate-600">
             Total omset = jumlah yang perlu di-setor (semua kanal). Laba bersih estimasi dari HPP produk.
+            {omsetFilters ? ' Filter di bawah hanya memengaruhi blok omset ini.' : ''}
           </p>
+          {omsetFilters ? (
+            <div className="mt-3 flex flex-wrap items-end gap-3 rounded-xl border border-sky-200/80 bg-white/70 p-3">
+              {user?.role_slug === 'super_admin' ? (
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-600">Cabang</label>
+                  <select
+                    value={omsetBranchId}
+                    onChange={(e) => {
+                      setOmsetBranchId(e.target.value);
+                      setOmsetCashierId('');
+                    }}
+                    className="min-w-[12rem] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">Semua cabang</option>
+                    {(omsetFilters.branches || []).map((b) => (
+                      <option key={b.id} value={String(b.id)}>
+                        {b.code} — {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Kasir / karyawan</label>
+                <select
+                  value={omsetCashierId}
+                  onChange={(e) => setOmsetCashierId(e.target.value)}
+                  className="min-w-[12rem] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                >
+                  <option value="">Semua</option>
+                  {(omsetFilters.cashiers || []).map((c) => (
+                    <option key={c.id} value={String(c.id)}>
+                      {user?.role_slug === 'super_admin' && c.branch_id != null ? `${c.full_name} (#${c.branch_id})` : c.full_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : null}
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
             {[
               { label: 'Penjualan', v: tom.penjualan },
@@ -122,6 +188,7 @@ export default function DashboardPage() {
               { label: 'Simpel', v: tom.simpel },
               { label: 'Digipos', v: tom.digipos },
               { label: 'Bonafit', v: tom.bonafit },
+              { label: 'Sidiva', v: tom.sidiva },
               ...(Number(tom.wallet_lain) > 0 ? [{ label: 'Kanal lain', v: tom.wallet_lain }] : []),
               { label: 'Total omset', v: tom.total_omset, bold: true },
               { label: 'Laba bersih (est.)', v: tom.net_profit, accent: true },
@@ -137,7 +204,7 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
-          <p className="mt-3 text-xs text-slate-500">Transaksi hari ini: {tom.trx_count ?? 0}</p>
+          <p className="mt-3 text-xs text-slate-500">Transaksi hari ini (sesuai filter): {tom.trx_count ?? 0}</p>
         </div>
       )}
 

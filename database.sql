@@ -27,6 +27,7 @@ DROP TABLE IF EXISTS resellers;
 DROP TABLE IF EXISTS customers;
 DROP TABLE IF EXISTS attendances;
 DROP TABLE IF EXISTS employees;
+DROP TABLE IF EXISTS work_shifts;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS branches;
 DROP TABLE IF EXISTS roles;
@@ -66,6 +67,23 @@ CREATE TABLE branches (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ------------------------------------------------------------
+-- work_shifts (jam masuk/keluar per cabang)
+-- ------------------------------------------------------------
+CREATE TABLE work_shifts (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  branch_id INT UNSIGNED NOT NULL,
+  name VARCHAR(64) NOT NULL,
+  time_in TIME NOT NULL COMMENT 'Jam mulai kerja (acuan telat)',
+  time_out TIME NOT NULL COMMENT 'Jam selesai kerja',
+  grace_in_minutes INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Toleransi telat (menit setelah time_in)',
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_work_shift_branch_name (branch_id, name),
+  CONSTRAINT fk_ws_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ------------------------------------------------------------
 -- users (JWT subject)
 -- ------------------------------------------------------------
 CREATE TABLE users (
@@ -97,11 +115,13 @@ CREATE TABLE employees (
   branch_id INT UNSIGNED NOT NULL,
   employee_code VARCHAR(32) NOT NULL,
   position VARCHAR(64) NULL,
+  work_shift_id INT UNSIGNED NULL,
   hire_date DATE NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_employees_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_employees_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+  CONSTRAINT fk_employees_work_shift FOREIGN KEY (work_shift_id) REFERENCES work_shifts(id) ON DELETE SET NULL,
   UNIQUE KEY uk_employees_code_branch (employee_code, branch_id),
   INDEX idx_employees_user (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -113,6 +133,7 @@ CREATE TABLE attendances (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   employee_id INT UNSIGNED NOT NULL,
   branch_id INT UNSIGNED NOT NULL,
+  work_shift_id INT UNSIGNED NULL,
   clock_in_at DATETIME NOT NULL,
   clock_out_at DATETIME NULL,
   latitude_in DECIMAL(10,7) NOT NULL,
@@ -127,6 +148,7 @@ CREATE TABLE attendances (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_att_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
   CONSTRAINT fk_att_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+  CONSTRAINT fk_att_work_shift FOREIGN KEY (work_shift_id) REFERENCES work_shifts(id) ON DELETE SET NULL,
   INDEX idx_att_branch_date (branch_id, clock_in_at),
   INDEX idx_att_employee_date (employee_id, clock_in_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

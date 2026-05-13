@@ -124,11 +124,29 @@ function distanceMeters(lat1, lon1, lat2, lon2) {
   return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
 }
 
+/** Menit keterlambatan: max(0, clock_in - (time_in + grace)) pada tanggal yang sama */
+function computeShiftLateMinutes(clockInAt, shiftTimeIn, graceInMinutes) {
+  const ci = clockInAt instanceof Date ? clockInAt : new Date(clockInAt);
+  const t = String(shiftTimeIn || '08:00:00');
+  const parts = t.split(':');
+  const hh = parseInt(parts[0], 10) || 0;
+  const mm = parseInt(parts[1], 10) || 0;
+  const ss = parseInt(parts[2], 10) || 0;
+  const deadline = new Date(ci.getFullYear(), ci.getMonth(), ci.getDate(), hh, mm, ss, 0);
+  deadline.setMinutes(deadline.getMinutes() + (Number(graceInMinutes) || 0));
+  return Math.max(0, Math.floor((ci.getTime() - deadline.getTime()) / 60000));
+}
+
 /** Buat baris employees otomatis untuk user cabang (kasir/karyawan) agar absensi bisa dipakai */
 async function ensureEmployeeForAttendance(poolConn, user) {
   const [em] = await poolConn.query(
-    `SELECT e.*, b.latitude AS blat, b.longitude AS blng, b.attendance_radius_meters AS rad
-     FROM employees e JOIN branches b ON b.id = e.branch_id WHERE e.user_id = :uid LIMIT 1`,
+    `SELECT e.*, b.latitude AS blat, b.longitude AS blng, b.attendance_radius_meters AS rad,
+            ws.id AS ws_id, ws.name AS ws_name, ws.time_in AS ws_time_in, ws.time_out AS ws_time_out,
+            ws.grace_in_minutes AS ws_grace_in, ws.is_active AS ws_is_active
+     FROM employees e
+     JOIN branches b ON b.id = e.branch_id
+     LEFT JOIN work_shifts ws ON ws.id = e.work_shift_id
+     WHERE e.user_id = :uid LIMIT 1`,
     { uid: user.id }
   );
   if (em[0]) return em[0];
@@ -144,11 +162,40 @@ async function ensureEmployeeForAttendance(poolConn, user) {
     if (e.code !== 'ER_DUP_ENTRY') throw e;
   }
   const [em2] = await poolConn.query(
-    `SELECT e.*, b.latitude AS blat, b.longitude AS blng, b.attendance_radius_meters AS rad
-     FROM employees e JOIN branches b ON b.id = e.branch_id WHERE e.user_id = :uid LIMIT 1`,
+    `SELECT e.*, b.latitude AS blat, b.longitude AS blng, b.attendance_radius_meters AS rad,
+            ws.id AS ws_id, ws.name AS ws_name, ws.time_in AS ws_time_in, ws.time_out AS ws_time_out,
+            ws.grace_in_minutes AS ws_grace_in, ws.is_active AS ws_is_active
+     FROM employees e
+     JOIN branches b ON b.id = e.branch_id
+     LEFT JOIN work_shifts ws ON ws.id = e.work_shift_id
+     WHERE e.user_id = :uid LIMIT 1`,
     { uid: user.id }
   );
   return em2[0] || null;
+}
+
+async function syncUserEmployeeShift(poolConn, userId, branchId, roleSlug, workShiftId) {
+  const slug = String(roleSlug || '').toLowerCase();
+  if (!branchId || (slug !== 'kasir' && slug !== 'karyawan')) {
+    await poolConn.query(`UPDATE employees SET work_shift_id=NULL WHERE user_id=:uid`, { uid: userId });
+    return;
+  }
+  await ensureEmployeeForAttendance(poolConn, { id: userId, branch_id: branchId, role_slug: slug });
+  if (workShiftId == null || workShiftId === '') {
+    await poolConn.query(`UPDATE employees SET work_shift_id=NULL WHERE user_id=:uid`, { uid: userId });
+    return;
+  }
+  const sid = Number(workShiftId);
+  const [ws] = await poolConn.query(
+    `SELECT id FROM work_shifts WHERE id=:id AND branch_id=:bid AND is_active=1`,
+    { id: sid, bid: branchId }
+  );
+  if (!ws[0]) throw new Error('Shift tidak valid untuk cabang ini');
+  await poolConn.query(`UPDATE employees SET work_shift_id=:sid, branch_id=:bid WHERE user_id=:uid`, {
+    sid,
+    bid: branchId,
+    uid: userId,
+  });
 }
 
 async function logActivity(userId, action, entity, entityId, meta, ip) {
@@ -364,6 +411,124 @@ app.put('/api/branches/:id', authMiddleware, requireRoles('super_admin'), async 
   }
 });
 
+app.delete('/api/branches/:id', authMiddleware, requireRoles('super_admin'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) return fail(res, 400, 'ID tidak valid');
+    const [b] = await pool.query(`SELECT id, code, name FROM branches WHERE id=:id`, { id });
+    if (!b.length) return fail(res, 404, 'Cabang tidak ditemukan');
+
+    const [[{ sc }]] = await pool.query(`SELECT COUNT(*) AS sc FROM sales WHERE branch_id=:id`, { id });
+    if (Number(sc) > 0) {
+      return fail(res, 409, `Cabang tidak bisa dihapus: masih ada ${sc} transaksi penjualan.`);
+    }
+    const [[{ uc }]] = await pool.query(`SELECT COUNT(*) AS uc FROM users WHERE branch_id=:id`, { id });
+    if (Number(uc) > 0) {
+      return fail(res, 409, `Cabang tidak bisa dihapus: masih ada ${uc} pengguna. Ubah cabang mereka di menu User terlebih dahulu.`);
+    }
+
+    await pool.query(`DELETE FROM branches WHERE id=:id`, { id });
+    await logActivity(req.user.id, 'delete', 'branch', id, { code: b[0].code, name: b[0].name }, req.ip);
+    return ok(res, null, 'Cabang dihapus');
+  } catch (e) {
+    if (e.code === 'ER_ROW_IS_REFERENCED_2' || e.errno === 1451) {
+      return fail(res, 409, 'Cabang tidak bisa dihapus: masih dipakai data lain.');
+    }
+    return fail(res, 500, e.message);
+  }
+});
+
+/* Work shifts (jam masuk/keluar per cabang) */
+function resolveBranchIdForWorkShifts(req, bodyBranchId) {
+  if (req.user.role_slug === 'super_admin') {
+    const id = Number(bodyBranchId ?? req.query.branch_id);
+    return Number.isFinite(id) && id > 0 ? id : null;
+  }
+  return Number(req.user.branch_id) || null;
+}
+
+app.get('/api/work-shifts', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const bid = resolveBranchIdForWorkShifts(req);
+    if (!bid) return fail(res, 400, 'Cabang wajib (branch_id)');
+    if (req.user.role_slug === 'admin_cabang' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
+    const [rows] = await pool.query(
+      `SELECT ws.*, b.name AS branch_name FROM work_shifts ws JOIN branches b ON b.id = ws.branch_id WHERE ws.branch_id=:bid ORDER BY ws.name`,
+      { bid }
+    );
+    return ok(res, rows, '');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+app.post('/api/work-shifts', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const bid = resolveBranchIdForWorkShifts(req, req.body.branch_id);
+    if (!bid) return fail(res, 400, 'Cabang wajib');
+    if (req.user.role_slug === 'admin_cabang' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
+    const name = String(req.body.name || '').trim();
+    const time_in = String(req.body.time_in || '').trim();
+    const time_out = String(req.body.time_out || '').trim();
+    const grace_in_minutes = Math.min(240, Math.max(0, Number(req.body.grace_in_minutes) || 0));
+    if (!name || !time_in || !time_out) return fail(res, 400, 'Nama & jam masuk/keluar wajib');
+    const [ins] = await pool.query(
+      `INSERT INTO work_shifts (branch_id, name, time_in, time_out, grace_in_minutes, is_active)
+       VALUES (:bid, :name, :tin, :tout, :grace, 1)`,
+      { bid, name, tin: time_in, tout: time_out, grace: grace_in_minutes }
+    );
+    await logActivity(req.user.id, 'create', 'work_shift', ins.insertId, { name, branch_id: bid }, req.ip);
+    return ok(res, { id: ins.insertId }, 'Shift dibuat');
+  } catch (e) {
+    if (e.code === 'ER_DUP_ENTRY') return fail(res, 400, 'Nama shift sudah ada di cabang ini');
+    return fail(res, 500, e.message);
+  }
+});
+
+app.put('/api/work-shifts/:id', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [cur] = await pool.query(`SELECT branch_id FROM work_shifts WHERE id=:id`, { id });
+    if (!cur.length) return fail(res, 404, 'Shift tidak ada');
+    if (req.user.role_slug === 'admin_cabang' && Number(cur[0].branch_id) !== Number(req.user.branch_id)) {
+      return fail(res, 403, 'Tidak diizinkan');
+    }
+    const name = String(req.body.name || '').trim();
+    const time_in = String(req.body.time_in || '').trim();
+    const time_out = String(req.body.time_out || '').trim();
+    const grace_in_minutes = Math.min(240, Math.max(0, Number(req.body.grace_in_minutes) || 0));
+    const is_active = req.body.is_active === false || req.body.is_active === 0 || req.body.is_active === '0' ? 0 : 1;
+    if (!name || !time_in || !time_out) return fail(res, 400, 'Nama & jam wajib');
+    await pool.query(
+      `UPDATE work_shifts SET name=:name, time_in=:tin, time_out=:tout, grace_in_minutes=:grace, is_active=:ia WHERE id=:id`,
+      { id, name, tin: time_in, tout: time_out, grace: grace_in_minutes, ia: is_active }
+    );
+    await logActivity(req.user.id, 'update', 'work_shift', id, {}, req.ip);
+    return ok(res, { id }, 'Shift diperbarui');
+  } catch (e) {
+    if (e.code === 'ER_DUP_ENTRY') return fail(res, 400, 'Nama shift bentrok');
+    return fail(res, 500, e.message);
+  }
+});
+
+app.delete('/api/work-shifts/:id', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [cur] = await pool.query(`SELECT branch_id, name FROM work_shifts WHERE id=:id`, { id });
+    if (!cur.length) return fail(res, 404, 'Shift tidak ada');
+    if (req.user.role_slug === 'admin_cabang' && Number(cur[0].branch_id) !== Number(req.user.branch_id)) {
+      return fail(res, 403, 'Tidak diizinkan');
+    }
+    const [[{ ec }]] = await pool.query(`SELECT COUNT(*) AS ec FROM employees WHERE work_shift_id=:id`, { id });
+    if (Number(ec) > 0) return fail(res, 409, `Shift masih dipakai ${ec} karyawan — ubah di menu Pengguna dulu.`);
+    await pool.query(`DELETE FROM work_shifts WHERE id=:id`, { id });
+    await logActivity(req.user.id, 'delete', 'work_shift', id, { name: cur[0].name }, req.ip);
+    return ok(res, null, 'Shift dihapus');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
 /* Users */
 app.get('/api/users', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
   try {
@@ -382,9 +547,12 @@ app.get('/api/users', authMiddleware, requireRoles('super_admin', 'admin_cabang'
     const sortCol = ['id', 'full_name', 'email', 'created_at'].includes(sort) ? `u.${sort}` : 'u.id';
     const [rows] = await pool.query(
       `SELECT SQL_CALC_FOUND_ROWS u.id, u.role_id, u.email, u.full_name, u.phone, u.branch_id, u.is_active, u.created_at,
-              r.slug AS role_slug, r.name AS role_name, b.name AS branch_name
+              r.slug AS role_slug, r.name AS role_name, b.name AS branch_name,
+              e.work_shift_id, ws.name AS work_shift_name
        FROM users u JOIN roles r ON r.id = u.role_id
        LEFT JOIN branches b ON b.id = u.branch_id
+       LEFT JOIN employees e ON e.user_id = u.id
+       LEFT JOIN work_shifts ws ON ws.id = e.work_shift_id
        ${where} ORDER BY ${sortCol} ${order} LIMIT :limit OFFSET :offset`,
       { ...params, limit, offset }
     );
@@ -397,7 +565,7 @@ app.get('/api/users', authMiddleware, requireRoles('super_admin', 'admin_cabang'
 
 app.post('/api/users', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
   try {
-    const { email, password, full_name, phone, role_id, branch_id, is_active } = req.body || {};
+    const { email, password, full_name, phone, role_id, branch_id, is_active, work_shift_id } = req.body || {};
     if (!email || !password || !full_name || !role_id) return fail(res, 400, 'Data user tidak lengkap');
     const [roles] = await pool.query(`SELECT slug FROM roles WHERE id=:id`, { id: role_id });
     const slug = roles[0]?.slug;
@@ -408,15 +576,31 @@ app.post('/api/users', authMiddleware, requireRoles('super_admin', 'admin_cabang
         return fail(res, 403, 'Admin cabang hanya untuk cabang sendiri');
       }
     }
-    const hash = await bcrypt.hash(password, 10);
     const bid = slug === 'super_admin' ? null : branch_id || req.user.branch_id;
+    if ((slug === 'kasir' || slug === 'karyawan') && bid) {
+      if (work_shift_id == null || work_shift_id === '') return fail(res, 400, 'Shift wajib untuk kasir / karyawan');
+      const sid = Number(work_shift_id);
+      const [ws] = await pool.query(`SELECT id FROM work_shifts WHERE id=:id AND branch_id=:bid AND is_active=1`, {
+        id: sid,
+        bid,
+      });
+      if (!ws[0]) return fail(res, 400, 'Shift tidak valid untuk cabang ini');
+    }
+    const hash = await bcrypt.hash(password, 10);
     const [ins] = await pool.query(
       `INSERT INTO users (role_id, branch_id, email, password_hash, full_name, phone, is_active)
        VALUES (:role_id, :branch_id, :email, :hash, :full_name, :phone, :is_active)`,
       { role_id, branch_id: bid, email, hash, full_name, phone: phone || null, is_active: is_active === false ? 0 : 1 }
     );
-    await logActivity(req.user.id, 'create', 'user', ins.insertId, { email }, req.ip);
-    return ok(res, { id: ins.insertId }, 'User dibuat');
+    const newId = ins.insertId;
+    try {
+      await syncUserEmployeeShift(pool, newId, bid, slug, work_shift_id);
+    } catch (err) {
+      await pool.query(`DELETE FROM users WHERE id=:id`, { id: newId });
+      return fail(res, 400, err.message || 'Gagal menetapkan shift');
+    }
+    await logActivity(req.user.id, 'create', 'user', newId, { email }, req.ip);
+    return ok(res, { id: newId }, 'User dibuat');
   } catch (e) {
     if (e.code === 'ER_DUP_ENTRY') return fail(res, 400, 'Email sudah terdaftar');
     return fail(res, 500, e.message);
@@ -432,6 +616,20 @@ app.put('/api/users/:id', authMiddleware, requireRoles('super_admin', 'admin_cab
         if (id !== req.user.id) return fail(res, 403, 'Tidak dapat mengubah user cabang lain');
       }
     }
+    const [rolesPre] = await pool.query(`SELECT slug FROM roles WHERE id=:id`, { id: req.body.role_id });
+    const slugPre = rolesPre[0]?.slug;
+    const bidPre = req.body.branch_id === '' || req.body.branch_id == null ? null : Number(req.body.branch_id);
+    if ((slugPre === 'kasir' || slugPre === 'karyawan') && bidPre) {
+      if (req.body.work_shift_id == null || req.body.work_shift_id === '') {
+        return fail(res, 400, 'Shift wajib untuk kasir / karyawan');
+      }
+      const sid = Number(req.body.work_shift_id);
+      const [ws] = await pool.query(`SELECT id FROM work_shifts WHERE id=:id AND branch_id=:bid AND is_active=1`, {
+        id: sid,
+        bid: bidPre,
+      });
+      if (!ws[0]) return fail(res, 400, 'Shift tidak valid untuk cabang ini');
+    }
     const fields = ['full_name=:full_name', 'phone=:phone', 'is_active=:is_active', 'role_id=:role_id', 'branch_id=:branch_id'];
     const params = {
       id,
@@ -439,13 +637,18 @@ app.put('/api/users/:id', authMiddleware, requireRoles('super_admin', 'admin_cab
       phone: req.body.phone,
       is_active: req.body.is_active === false ? 0 : 1,
       role_id: req.body.role_id,
-      branch_id: req.body.branch_id,
+      branch_id: bidPre,
     };
     if (req.body.password) {
       fields.push('password_hash=:hash');
       params.hash = await bcrypt.hash(req.body.password, 10);
     }
     await pool.query(`UPDATE users SET ${fields.join(', ')} WHERE id=:id`, params);
+    try {
+      await syncUserEmployeeShift(pool, id, bidPre, slugPre, req.body.work_shift_id);
+    } catch (err) {
+      return fail(res, 400, err.message || 'Gagal sinkron shift karyawan');
+    }
     await logActivity(req.user.id, 'update', 'user', id, {}, req.ip);
     return ok(res, { id }, 'User diperbarui');
   } catch (e) {
@@ -1337,6 +1540,29 @@ app.put('/api/wallet-channels/:id', authMiddleware, requireRoles('super_admin', 
   }
 });
 
+app.delete('/api/wallet-channels/:id', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [ch] = await pool.query(`SELECT id, slug FROM wallet_channels WHERE id=:id LIMIT 1`, { id });
+    if (!ch[0]) return fail(res, 404, 'Kanal tidak ditemukan');
+    const [[{ cnt }]] = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM sale_items si
+       INNER JOIN wallet_channel_products wcp ON wcp.id = si.wallet_channel_product_id
+       WHERE wcp.channel_id = :id`,
+      { id }
+    );
+    if (Number(cnt) > 0) {
+      return fail(res, 400, 'Tidak bisa menghapus kanal: ada produk kanal yang pernah dipakai di penjualan.');
+    }
+    await pool.query(`DELETE FROM wallet_channel_products WHERE channel_id=:id`, { id });
+    await pool.query(`DELETE FROM wallet_channels WHERE id=:id`, { id });
+    await logActivity(req.user.id, 'delete', 'wallet_channel', id, { slug: ch[0].slug }, req.ip);
+    return ok(res, null, 'Kanal dihapus');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
 app.get('/api/wallet-channel-products', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
   try {
     const channelId = req.query.channel_id != null && req.query.channel_id !== '' ? Number(req.query.channel_id) : null;
@@ -1406,6 +1632,34 @@ app.put('/api/wallet-channel-products/:id', authMiddleware, requireRoles('super_
     );
     return ok(res, { id }, 'Produk kanal diperbarui');
   } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+app.delete('/api/wallet-channel-products/:id', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) return fail(res, 400, 'ID tidak valid');
+    const [w] = await pool.query(`SELECT id, name FROM wallet_channel_products WHERE id=:id`, { id });
+    if (!w.length) return fail(res, 404, 'Produk tidak ditemukan');
+    const [[{ cnt }]] = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM sale_items WHERE wallet_channel_product_id=:id`,
+      { id }
+    );
+    if (Number(cnt) > 0) {
+      return fail(
+        res,
+        409,
+        `Produk tidak bisa dihapus: sudah dipakai di ${cnt} baris penjualan. Gunakan nonaktifkan bila tidak dijual lagi.`
+      );
+    }
+    await pool.query(`DELETE FROM wallet_channel_products WHERE id=:id`, { id });
+    await logActivity(req.user.id, 'delete', 'wallet_channel_product', id, { name: w[0].name }, req.ip);
+    return ok(res, null, 'Produk kanal dihapus');
+  } catch (e) {
+    if (e.code === 'ER_ROW_IS_REFERENCED_2' || e.errno === 1451) {
+      return fail(res, 409, 'Produk tidak bisa dihapus: masih direferensikan data lain.');
+    }
     return fail(res, 500, e.message);
   }
 });
@@ -1714,7 +1968,94 @@ app.patch('/api/sales/:id/printed', authMiddleware, requireRoles('super_admin', 
   }
 });
 
+/** Hapus transaksi POS: kembalikan stok cabang untuk baris produk stok; baris produk kanal hanya dihapus dari DB */
+app.delete('/api/sales/:id', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) return fail(res, 400, 'ID tidak valid');
+
+    await conn.beginTransaction();
+    const [srows] = await conn.query(`SELECT id, branch_id FROM sales WHERE id=:id FOR UPDATE`, { id });
+    if (!srows.length) {
+      await conn.rollback();
+      return fail(res, 404, 'Transaksi tidak ada');
+    }
+    const branchId = Number(srows[0].branch_id);
+    if (req.user.role_slug !== 'super_admin' && Number(req.user.branch_id) !== branchId) {
+      await conn.rollback();
+      return fail(res, 403, 'Tidak diizinkan');
+    }
+
+    const [items] = await conn.query(
+      `SELECT product_id, quantity FROM sale_items WHERE sale_id=:id AND product_id IS NOT NULL`,
+      { id }
+    );
+    for (const row of items) {
+      const pid = Number(row.product_id);
+      const q = Number(row.quantity) || 0;
+      if (!pid || q <= 0) continue;
+      await conn.query(
+        `UPDATE stock_branch SET quantity = quantity + :q WHERE branch_id=:bid AND product_id=:pid`,
+        { q, bid: branchId, pid }
+      );
+      await conn.query(
+        `INSERT INTO stock_mutations (branch_id, product_id, mutation_type, quantity_delta, ref_type, ref_id, notes, created_by)
+         VALUES (:bid, :pid, 'adjustment', :d, 'sale_void', :sid, 'Pembatalan penjualan POS', :uid)`,
+        { bid: branchId, pid, d: q, sid: id, uid: req.user.id }
+      );
+    }
+
+    await conn.query(`DELETE FROM sales WHERE id=:id`, { id });
+    await conn.commit();
+    await logActivity(req.user.id, 'delete_sale', 'sale', id, { branch_id: branchId }, req.ip);
+    return ok(res, null, 'Transaksi dihapus');
+  } catch (e) {
+    await conn.rollback();
+    console.error(e);
+    return fail(res, 500, e.message);
+  } finally {
+    conn.release();
+  }
+});
+
 /* Attendance */
+app.get('/api/attendances/context', authMiddleware, requireRoles('karyawan', 'kasir', 'admin_cabang', 'super_admin'), async (req, res) => {
+  try {
+    const emp = await ensureEmployeeForAttendance(pool, req.user);
+    if (!emp) {
+      return ok(res, { employee: null, shift: null, open_attendance: null }, '');
+    }
+    let shift = null;
+    if (emp.work_shift_id && emp.ws_id && emp.ws_is_active) {
+      shift = {
+        id: emp.ws_id,
+        name: emp.ws_name,
+        time_in: emp.ws_time_in,
+        time_out: emp.ws_time_out,
+        grace_in_minutes: Number(emp.ws_grace_in) || 0,
+      };
+    } else if (emp.work_shift_id) {
+      shift = { inactive: true, message: 'Shift dinonaktifkan — hubungi admin.' };
+    }
+    const [open] = await pool.query(
+      `SELECT id, clock_in_at FROM attendances WHERE employee_id=:eid AND DATE(clock_in_at)=CURDATE() AND clock_out_at IS NULL ORDER BY id DESC LIMIT 1`,
+      { eid: emp.id }
+    );
+    return ok(
+      res,
+      {
+        employee: { id: emp.id, code: emp.employee_code, branch_id: emp.branch_id },
+        shift,
+        open_attendance: open[0] || null,
+      },
+      ''
+    );
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
 app.get('/api/attendances', authMiddleware, async (req, res) => {
   try {
     const { page, limit, offset, search, sort, order } = parsePagination(req.query);
@@ -1735,11 +2076,12 @@ app.get('/api/attendances', authMiddleware, async (req, res) => {
     }
     const sortCol = ['id', 'clock_in_at', 'status'].includes(sort) ? `a.${sort}` : 'a.id';
     const [rows] = await pool.query(
-      `SELECT SQL_CALC_FOUND_ROWS a.*, e.employee_code, u.full_name, b.name AS branch_name
+      `SELECT SQL_CALC_FOUND_ROWS a.*, e.employee_code, u.full_name, b.name AS branch_name, ws.name AS shift_name
        FROM attendances a
        JOIN employees e ON e.id = a.employee_id
        JOIN users u ON u.id = e.user_id
        JOIN branches b ON b.id = a.branch_id
+       LEFT JOIN work_shifts ws ON ws.id = a.work_shift_id
        ${where}
        ORDER BY ${sortCol} ${order} LIMIT :limit OFFSET :offset`,
       { ...params, limit, offset }
@@ -1766,14 +2108,31 @@ app.post('/api/attendances/clock-in', authMiddleware, requireRoles('karyawan', '
       { eid: emp.id }
     );
     if (open[0]) return fail(res, 400, 'Sudah clock in hari ini');
-    const workStart = new Date();
-    workStart.setHours(8, 0, 0, 0);
-    const lateMin = Math.max(0, Math.floor((Date.now() - workStart.getTime()) / 60000));
+    if (!emp.work_shift_id || !emp.ws_id || !emp.ws_is_active) {
+      return fail(
+        res,
+        400,
+        !emp.work_shift_id
+          ? 'Shift kerja belum ditetapkan. Hubungi admin cabang (menu Master Shift & Pengguna).'
+          : 'Shift Anda nonaktif — hubungi admin cabang.'
+      );
+    }
+    const now = new Date();
+    const lateMin = computeShiftLateMinutes(now, emp.ws_time_in, emp.ws_grace_in);
     const status = lateMin > 0 ? 'telat' : 'hadir';
     const [ins] = await pool.query(
-      `INSERT INTO attendances (employee_id, branch_id, clock_in_at, latitude_in, longitude_in, distance_in_meters, status, late_minutes)
-       VALUES (:eid, :bid, NOW(), :lat, :lng, :dist, :st, :lm)`,
-      { eid: emp.id, bid: emp.branch_id, lat: latitude, lng: longitude, dist: Math.round(dist), st: status, lm: lateMin }
+      `INSERT INTO attendances (employee_id, branch_id, work_shift_id, clock_in_at, latitude_in, longitude_in, distance_in_meters, status, late_minutes)
+       VALUES (:eid, :bid, :wsid, NOW(), :lat, :lng, :dist, :st, :lm)`,
+      {
+        eid: emp.id,
+        bid: emp.branch_id,
+        wsid: emp.work_shift_id,
+        lat: latitude,
+        lng: longitude,
+        dist: Math.round(dist),
+        st: status,
+        lm: lateMin,
+      }
     );
     await logActivity(req.user.id, 'clock_in', 'attendance', ins.insertId, { dist }, req.ip);
     return ok(res, { id: ins.insertId, status, distance_in_meters: Math.round(dist) }, 'Clock in berhasil');
@@ -1868,14 +2227,52 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
       );
       series = s2;
     }
-    const omsetBranch = req.user.role_slug !== 'super_admin' ? ' AND s.branch_id = :bidOm ' : '';
-    const omsetParams = req.user.role_slug !== 'super_admin' ? { bidOm: req.user.branch_id } : {};
+    /* Omset hari ini — filter cabang / kasir (super & admin cabang); kasir/karyawan = seluruh omset cabang hari ini */
+    let omsetBid = null;
+    let omsetCid = null;
+    const qTodayBranch = req.query.today_branch_id != null && req.query.today_branch_id !== '' ? Number(req.query.today_branch_id) : null;
+    const qTodayCashier = req.query.today_cashier_id != null && req.query.today_cashier_id !== '' ? Number(req.query.today_cashier_id) : null;
+
+    if (req.user.role_slug === 'admin_cabang' && req.user.branch_id) {
+      omsetBid = Number(req.user.branch_id);
+      omsetCid = qTodayCashier;
+      if (omsetCid) {
+        const [cu] = await pool.query(`SELECT u.id FROM users u WHERE u.id=:id AND u.branch_id=:bid`, { id: omsetCid, bid: omsetBid });
+        if (!cu.length) omsetCid = null;
+      }
+    } else if (req.user.role_slug === 'super_admin' && !staffToday) {
+      omsetBid = qTodayBranch || null;
+      omsetCid = qTodayCashier || null;
+      if (omsetCid && omsetBid) {
+        const [cu] = await pool.query(`SELECT u.id FROM users u WHERE u.id=:id AND u.branch_id=:bid`, { id: omsetCid, bid: omsetBid });
+        if (!cu.length) omsetCid = null;
+      } else if (omsetCid && !omsetBid) {
+        const [cu] = await pool.query(`SELECT u.id FROM users u WHERE u.id=:id`, { id: omsetCid });
+        if (!cu.length) omsetCid = null;
+      }
+    } else if (staffToday && req.user.branch_id) {
+      omsetBid = Number(req.user.branch_id);
+      omsetCid = null;
+    }
+
+    let omsetWhereExtra = '';
+    const omsetParams = {};
+    if (omsetBid) {
+      omsetWhereExtra += ' AND s.branch_id = :omsetBid ';
+      omsetParams.omsetBid = omsetBid;
+    }
+    if (omsetCid) {
+      omsetWhereExtra += ' AND s.cashier_user_id = :omsetCid ';
+      omsetParams.omsetCid = omsetCid;
+    }
+
     const [todayOmsetRows] = await pool.query(
       `SELECT
         SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) = 'simpel' THEN s.grand_total ELSE 0 END) AS omset_simpel,
         SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) = 'digipos' THEN s.grand_total ELSE 0 END) AS omset_digipos,
         SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) = 'bonafit' THEN s.grand_total ELSE 0 END) AS omset_bonafit,
-        SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) NOT IN ('simpel','digipos','bonafit') AND p.wallet_channel IS NOT NULL AND p.wallet_channel != '' THEN s.grand_total ELSE 0 END) AS omset_wallet_lain,
+        SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) = 'sidiva' THEN s.grand_total ELSE 0 END) AS omset_sidiva,
+        SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) NOT IN ('simpel','digipos','bonafit','sidiva') AND p.wallet_channel IS NOT NULL AND p.wallet_channel != '' THEN s.grand_total ELSE 0 END) AS omset_wallet_lain,
         SUM(CASE WHEN (p.wallet_channel IS NULL OR p.wallet_channel = '') AND s.is_wholesale_context = 1 THEN s.grand_total ELSE 0 END) AS omset_grosiran,
         SUM(CASE WHEN (p.wallet_channel IS NULL OR p.wallet_channel = '') AND s.is_wholesale_context = 0 THEN s.grand_total ELSE 0 END) AS omset_penjualan,
         COUNT(DISTINCT s.id) AS trx_count,
@@ -1886,7 +2283,7 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
       LEFT JOIN (
         ${sqlSaleItemsCogsSubquery()}
       ) c ON c.sale_id = s.id
-      WHERE DATE(s.created_at) = CURDATE() ${omsetBranch}`,
+      WHERE DATE(s.created_at) = CURDATE() ${omsetWhereExtra}`,
       omsetParams
     );
     const tom = todayOmsetRows[0] || {};
@@ -1896,11 +2293,51 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
       simpel: Number(tom.omset_simpel) || 0,
       digipos: Number(tom.omset_digipos) || 0,
       bonafit: Number(tom.omset_bonafit) || 0,
+      sidiva: Number(tom.omset_sidiva) || 0,
       wallet_lain: Number(tom.omset_wallet_lain) || 0,
       total_omset: Number(tom.total_omset) || 0,
       trx_count: Number(tom.trx_count) || 0,
       net_profit: Number(tom.net_profit) || 0,
     };
+
+    let today_omset_filters = null;
+    if (!staffToday && (req.user.role_slug === 'super_admin' || req.user.role_slug === 'admin_cabang')) {
+      let omset_branches = [];
+      if (req.user.role_slug === 'super_admin') {
+        const [br] = await pool.query(`SELECT id, code, name FROM branches ORDER BY name`);
+        omset_branches = br;
+      } else if (req.user.branch_id) {
+        const [br] = await pool.query(`SELECT id, code, name FROM branches WHERE id=:id`, { id: req.user.branch_id });
+        omset_branches = br;
+      }
+      let cashiers = [];
+      if (req.user.role_slug === 'admin_cabang' && omsetBid) {
+        const [cx] = await pool.query(
+          `SELECT u.id, u.full_name FROM users u
+           JOIN roles r ON r.id = u.role_id
+           WHERE u.branch_id = :bid AND r.slug IN ('kasir','karyawan','admin_cabang')
+           ORDER BY u.full_name`,
+          { bid: omsetBid }
+        );
+        cashiers = cx;
+      } else if (req.user.role_slug === 'super_admin') {
+        const cparams = {};
+        let cwhere = " WHERE r.slug IN ('kasir','karyawan','admin_cabang') ";
+        if (omsetBid) {
+          cwhere += ' AND u.branch_id = :bid ';
+          cparams.bid = omsetBid;
+        }
+        const [cx] = await pool.query(
+          `SELECT u.id, u.full_name, u.branch_id FROM users u
+           JOIN roles r ON r.id = u.role_id
+           ${cwhere}
+           ORDER BY u.full_name LIMIT 300`,
+          cparams
+        );
+        cashiers = cx;
+      }
+      today_omset_filters = { branches: omset_branches, cashiers };
+    }
     return ok(
       res,
       {
@@ -1911,6 +2348,7 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
         top_branches: topBranches,
         low_stock: lowStock,
         today_omset,
+        today_omset_filters,
       },
       ''
     );
@@ -2410,7 +2848,8 @@ app.get('/api/reports/daily-omset', authMiddleware, requireRoles('super_admin', 
         SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) = 'simpel' THEN s.grand_total ELSE 0 END) AS omset_simpel,
         SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) = 'digipos' THEN s.grand_total ELSE 0 END) AS omset_digipos,
         SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) = 'bonafit' THEN s.grand_total ELSE 0 END) AS omset_bonafit,
-        SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) NOT IN ('simpel','digipos','bonafit') AND p.wallet_channel IS NOT NULL AND p.wallet_channel != '' THEN s.grand_total ELSE 0 END) AS omset_wallet_lain,
+        SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) = 'sidiva' THEN s.grand_total ELSE 0 END) AS omset_sidiva,
+        SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) NOT IN ('simpel','digipos','bonafit','sidiva') AND p.wallet_channel IS NOT NULL AND p.wallet_channel != '' THEN s.grand_total ELSE 0 END) AS omset_wallet_lain,
         SUM(CASE WHEN (p.wallet_channel IS NULL OR p.wallet_channel = '') AND s.is_wholesale_context = 1 THEN s.grand_total ELSE 0 END) AS omset_grosiran,
         SUM(CASE WHEN (p.wallet_channel IS NULL OR p.wallet_channel = '') AND s.is_wholesale_context = 0 THEN s.grand_total ELSE 0 END) AS omset_penjualan,
         COUNT(DISTINCT s.id) AS trx_count,
@@ -2466,6 +2905,130 @@ app.get('/api/reports/daily-omset', authMiddleware, requireRoles('super_admin', 
     }
 
     return ok(res, { rows, branches, cashiers }, '');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+/** Baris transaksi (produk / kanal) untuk laporan — filter tanggal, cabang, kasir */
+app.get('/api/reports/transaction-lines', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const { page, limit, offset } = parsePagination(req.query);
+    let from = (req.query.from || '').toString().trim().slice(0, 10);
+    let to = (req.query.to || '').toString().trim().slice(0, 10);
+    if (!from || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !to || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      const t = new Date();
+      to = t.toISOString().slice(0, 10);
+      const u = new Date(t);
+      u.setUTCDate(u.getUTCDate() - 29);
+      from = u.toISOString().slice(0, 10);
+    }
+    if (from > to) return fail(res, 400, 'Tanggal mulai tidak boleh setelah tanggal akhir');
+
+    let branchId = req.query.branch_id != null && req.query.branch_id !== '' ? Number(req.query.branch_id) : null;
+    let cashierUid = req.query.cashier_user_id != null && req.query.cashier_user_id !== '' ? Number(req.query.cashier_user_id) : null;
+
+    if (req.user.role_slug === 'admin_cabang') {
+      branchId = Number(req.user.branch_id);
+      if (cashierUid) {
+        const [cu] = await pool.query(`SELECT u.id FROM users u WHERE u.id=:id AND u.branch_id=:bid`, { id: cashierUid, bid: branchId });
+        if (!cu.length) cashierUid = null;
+      }
+    } else if (cashierUid && branchId) {
+      const [cu] = await pool.query(`SELECT u.id FROM users u WHERE u.id=:id AND u.branch_id=:bid`, { id: cashierUid, bid: branchId });
+      if (!cu.length) cashierUid = null;
+    } else if (cashierUid && !branchId) {
+      const [cu] = await pool.query(`SELECT u.id FROM users u WHERE u.id=:id`, { id: cashierUid });
+      if (!cu.length) cashierUid = null;
+    }
+
+    let where = ' WHERE DATE(s.created_at) BETWEEN :from AND :to ';
+    const qparams = { from, to };
+    if (branchId) {
+      where += ' AND s.branch_id = :bid ';
+      qparams.bid = branchId;
+    }
+    if (cashierUid) {
+      where += ' AND s.cashier_user_id = :cid ';
+      qparams.cid = cashierUid;
+    }
+
+    const [rows] = await pool.query(
+      `SELECT SQL_CALC_FOUND_ROWS
+        si.id AS line_id,
+        s.id AS sale_id,
+        s.sale_number,
+        s.created_at,
+        b.name AS branch_name,
+        u.full_name AS cashier_name,
+        COALESCE(p.name, wcp.name) AS product_name,
+        COALESCE(p.sku, '') AS sku,
+        si.quantity,
+        si.unit_price,
+        si.line_subtotal,
+        CASE
+          WHEN NULLIF(TRIM(pay.wallet_channel), '') IS NOT NULL THEN TRIM(pay.wallet_channel)
+          WHEN wc.id IS NOT NULL THEN COALESCE(wc.label, wc.slug)
+          WHEN s.is_wholesale_context = 1 THEN 'Grosir'
+          ELSE 'Ecer'
+        END AS channel_display
+      FROM sale_items si
+      JOIN sales s ON s.id = si.sale_id
+      JOIN branches b ON b.id = s.branch_id
+      JOIN users u ON u.id = s.cashier_user_id
+      LEFT JOIN products p ON p.id = si.product_id
+      LEFT JOIN wallet_channel_products wcp ON wcp.id = si.wallet_channel_product_id
+      LEFT JOIN wallet_channels wc ON wc.id = wcp.channel_id
+      LEFT JOIN payments pay ON pay.sale_id = s.id AND pay.id = (SELECT MIN(p2.id) FROM payments p2 WHERE p2.sale_id = s.id)
+      ${where}
+      ORDER BY s.created_at DESC, si.id DESC
+      LIMIT :limit OFFSET :offset`,
+      { ...qparams, limit, offset }
+    );
+    const [[{ total }]] = await pool.query('SELECT FOUND_ROWS() AS total');
+
+    let branches = [];
+    if (req.user.role_slug === 'super_admin') {
+      const [br] = await pool.query(`SELECT id, code, name FROM branches ORDER BY name`);
+      branches = br;
+    } else if (req.user.branch_id) {
+      const [br] = await pool.query(`SELECT id, code, name FROM branches WHERE id=:id`, { id: req.user.branch_id });
+      branches = br;
+    }
+
+    let cashiers = [];
+    if (req.user.role_slug === 'admin_cabang' && branchId) {
+      const [cx] = await pool.query(
+        `SELECT u.id, u.full_name FROM users u
+         JOIN roles r ON r.id = u.role_id
+         WHERE u.branch_id = :bid AND r.slug IN ('kasir','karyawan','admin_cabang')
+         ORDER BY u.full_name`,
+        { bid: branchId }
+      );
+      cashiers = cx;
+    } else if (req.user.role_slug === 'super_admin') {
+      const cparams = {};
+      let cwhere = " WHERE r.slug IN ('kasir','karyawan','admin_cabang') ";
+      if (branchId) {
+        cwhere += ' AND u.branch_id = :bid ';
+        cparams.bid = branchId;
+      }
+      const [cx] = await pool.query(
+        `SELECT u.id, u.full_name, u.branch_id FROM users u
+         JOIN roles r ON r.id = u.role_id
+         ${cwhere}
+         ORDER BY u.full_name LIMIT 300`,
+        cparams
+      );
+      cashiers = cx;
+    }
+
+    return ok(res, { rows, branches, cashiers }, '', {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit) || 1,
+    });
   } catch (e) {
     return fail(res, 500, e.message);
   }
@@ -2588,11 +3151,12 @@ app.get('/api/reports/attendance', authMiddleware, requireRoles('super_admin', '
       params.s = `%${search}%`;
     }
     const [rows] = await pool.query(
-      `SELECT SQL_CALC_FOUND_ROWS a.*, u.full_name, e.employee_code, b.name AS branch_name
+      `SELECT SQL_CALC_FOUND_ROWS a.*, u.full_name, e.employee_code, b.name AS branch_name, ws.name AS shift_name
        FROM attendances a
        JOIN employees e ON e.id=a.employee_id
        JOIN users u ON u.id=e.user_id
        JOIN branches b ON b.id=a.branch_id
+       LEFT JOIN work_shifts ws ON ws.id = a.work_shift_id
        ${where} ORDER BY a.clock_in_at DESC LIMIT :limit OFFSET :offset`,
       { ...params, limit, offset }
     );

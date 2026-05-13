@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Plus, PackagePlus } from 'lucide-react';
+import { Plus, PackagePlus, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
 import { Modal } from '@/components/Modal';
@@ -11,6 +11,7 @@ import { productService } from '@/services/productService';
 import { transferService } from '@/services/transferService';
 import { useAuth } from '@/contexts/AuthContext';
 import { Link } from 'react-router-dom';
+import { iconActionDelete } from '@/utils/iconActionButton';
 
 export default function StockBranchPage() {
   const { user } = useAuth();
@@ -279,10 +280,11 @@ export default function StockBranchPage() {
                 {reqLines.length > 1 && (
                   <button
                     type="button"
-                    className="text-xs text-red-600"
+                    title="Hapus baris"
                     onClick={() => setReqLines((ls) => ls.filter((_, i) => i !== idx))}
+                    className={iconActionDelete}
                   >
-                    Hapus
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 )}
               </div>

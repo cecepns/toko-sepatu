@@ -5,7 +5,12 @@ const API_BASE_URL = (import.meta.env.VITE_API_URL || 'https://api-inventory.isa
 const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 30000,
-  headers: { 'Content-Type': 'application/json' },
+  headers: {
+    'Content-Type': 'application/json',
+    // Minta tidak memakai respons cache lama (browser / proxy) untuk data dinamis
+    'Cache-Control': 'no-cache',
+    Pragma: 'no-cache',
+  },
 });
 
 api.interceptors.request.use((config) => {

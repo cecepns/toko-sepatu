@@ -7,6 +7,7 @@ import { Modal } from '@/components/Modal';
 import { useServerTable } from '@/hooks/useServerTable';
 import { categoryService } from '@/services/categoryService';
 import { confirmToast } from '@/utils/confirm';
+import { iconActionDelete, iconActionEdit } from '@/utils/iconActionButton';
 
 export default function CategoriesPage() {
   const fetcher = useCallback((p) => categoryService.list(p), []);
@@ -58,11 +59,11 @@ export default function CategoriesPage() {
             key: 'a',
             label: '',
             render: (row) => (
-              <div className="flex gap-2">
-                <button type="button" onClick={() => setModal({ open: true, row })} className="text-brand-600">
+              <div className="flex gap-1.5">
+                <button type="button" title="Ubah" onClick={() => setModal({ open: true, row })} className={iconActionEdit}>
                   <Pencil className="h-4 w-4" />
                 </button>
-                <button type="button" onClick={() => remove(row.id)} className="text-red-600">
+                <button type="button" title="Hapus" onClick={() => remove(row.id)} className={iconActionDelete}>
                   <Trash2 className="h-4 w-4" />
                 </button>
               </div>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Ban, CircleCheck } from 'lucide-react';
+import { iconActionDelete, iconActionEdit, iconActionToggleOff, iconActionToggleOn } from '@/utils/iconActionButton';
 import { PageHeader } from '@/components/PageHeader';
 import { Modal } from '@/components/Modal';
 import { walletChannelService } from '@/services/walletChannelService';
@@ -131,10 +132,12 @@ export default function WalletChannelProductsPage() {
           <button
             type="button"
             disabled={!channelId}
+            title="Tambah produk"
+            aria-label="Tambah produk"
             onClick={() => setModal({ open: true, row: null })}
-            className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+            className="inline-flex h-11 w-11 items-center justify-center rounded-xl bg-brand-600 text-white shadow-sm hover:bg-brand-700 disabled:opacity-50"
           >
-            <Plus className="h-4 w-4" /> Tambah produk
+            <Plus className="h-5 w-5" />
           </button>
         }
       />
@@ -158,7 +161,9 @@ export default function WalletChannelProductsPage() {
               <th className="px-3 py-3">Modal default</th>
               <th className="px-3 py-3">Harga jual default</th>
               <th className="px-3 py-3">Status</th>
-              <th className="px-3 py-3 text-right">Aksi</th>
+              <th className="px-3 py-3 text-right">
+                <span className="sr-only">Aksi</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -176,15 +181,33 @@ export default function WalletChannelProductsPage() {
                   <td className="px-3 py-2.5 tabular-nums">{formatCurrency(Number(r.default_sale_price))}</td>
                   <td className="px-3 py-2.5">{r.is_active ? <span className="text-emerald-700">Aktif</span> : <span className="text-slate-500">Off</span>}</td>
                   <td className="px-3 py-2.5">
-                    <div className="flex flex-wrap items-center justify-end gap-2">
-                      <button type="button" onClick={() => setModal({ open: true, row: r })} className="text-brand-600 hover:underline">
-                        <Pencil className="mr-1 inline h-3.5 w-3.5" /> Edit
+                    <div className="flex flex-wrap items-center justify-end gap-1.5">
+                      <button
+                        type="button"
+                        title="Ubah"
+                        aria-label="Ubah produk kanal"
+                        onClick={() => setModal({ open: true, row: r })}
+                        className={iconActionEdit}
+                      >
+                        <Pencil className="h-4 w-4" />
                       </button>
-                      <button type="button" onClick={() => toggle(r)} className="text-slate-600 hover:underline">
-                        {r.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                      <button
+                        type="button"
+                        title={r.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                        aria-label={r.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                        onClick={() => toggle(r)}
+                        className={r.is_active ? iconActionToggleOff : iconActionToggleOn}
+                      >
+                        {r.is_active ? <Ban className="h-4 w-4" /> : <CircleCheck className="h-4 w-4" />}
                       </button>
-                      <button type="button" onClick={() => remove(r)} className="text-red-600 hover:underline" title="Hapus permanen">
-                        <Trash2 className="mr-1 inline h-3.5 w-3.5" /> Hapus
+                      <button
+                        type="button"
+                        title="Hapus"
+                        aria-label="Hapus produk kanal"
+                        onClick={() => remove(r)}
+                        className={iconActionDelete}
+                      >
+                        <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
                   </td>

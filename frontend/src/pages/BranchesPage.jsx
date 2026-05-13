@@ -7,6 +7,7 @@ import { Modal } from '@/components/Modal';
 import { useServerTable } from '@/hooks/useServerTable';
 import { branchService } from '@/services/branchService';
 import { useAuth } from '@/contexts/AuthContext';
+import { iconActionDelete, iconActionEdit } from '@/utils/iconActionButton';
 
 export default function BranchesPage() {
   const { user } = useAuth();
@@ -115,11 +116,11 @@ export default function BranchesPage() {
             label: 'Aksi',
             render: (row) =>
               isSuper ? (
-                <div className="flex items-center gap-2">
-                  <button type="button" className="text-brand-600 hover:text-brand-800" title="Edit" onClick={() => setModal({ open: true, row })}>
+                <div className="flex items-center gap-1.5">
+                  <button type="button" className={iconActionEdit} title="Ubah" onClick={() => setModal({ open: true, row })}>
                     <Pencil className="h-4 w-4" />
                   </button>
-                  <button type="button" className="text-red-600 hover:text-red-800" title="Hapus cabang" onClick={() => removeBranch(row)}>
+                  <button type="button" className={iconActionDelete} title="Hapus cabang" onClick={() => removeBranch(row)}>
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </div>

@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { Eye, Trash2 } from 'lucide-react';
+import { iconActionDelete, iconActionNeutral } from '@/utils/iconActionButton';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
 import { useServerTable } from '@/hooks/useServerTable';
@@ -45,17 +46,13 @@ export default function SalesPage() {
             key: 'a',
             label: 'Aksi',
             render: (row) => (
-              <div className="flex flex-wrap items-center gap-3">
-                <Link to={`/sales/${row.id}`} className="inline-flex items-center gap-1 text-brand-600 hover:text-brand-800">
-                  <Eye className="h-4 w-4" /> Detail
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Link to={`/sales/${row.id}`} title="Detail transaksi" className={iconActionNeutral}>
+                  <Eye className="h-4 w-4" />
                 </Link>
                 {canDeleteSale ? (
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(row)}
-                    className="inline-flex items-center gap-1 text-red-600 hover:text-red-800"
-                  >
-                    <Trash2 className="h-4 w-4" /> Hapus
+                  <button type="button" title="Hapus transaksi" onClick={() => handleDelete(row)} className={iconActionDelete}>
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 ) : null}
               </div>

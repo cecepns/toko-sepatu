@@ -2,6 +2,7 @@ import api from './api';
 
 export const reportService = {
   dailyOmset: (params) => api.get('/api/reports/daily-omset', { params }).then((r) => r.data),
+  transactionLines: (params) => api.get('/api/reports/transaction-lines', { params }).then((r) => r.data),
   sales: (params) => api.get('/api/reports/sales', { params }).then((r) => r.data),
   pl: (params) => api.get('/api/reports/pl', { params }).then((r) => r.data),
   stock: (params) => api.get('/api/reports/stock', { params }).then((r) => r.data),

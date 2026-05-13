@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Plus, Pencil } from 'lucide-react';
+import { Plus, Pencil, Trash2, Power } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
 import { Modal } from '@/components/Modal';
 import { useServerTable } from '@/hooks/useServerTable';
 import { walletChannelService } from '@/services/walletChannelService';
+import { iconActionDelete, iconActionEdit, iconActionToggleOff, iconActionToggleOn } from '@/utils/iconActionButton';
 
 export default function WalletChannelsPage() {
   const fetcher = useCallback(async (p) => {
@@ -79,6 +80,24 @@ export default function WalletChannelsPage() {
     }
   };
 
+  const removeChannel = async (row) => {
+    if (
+      !window.confirm(
+        `Hapus kanal "${row.label}" (${row.slug})? Produk kanal di bawahnya ikut terhapus jika belum pernah dipakai transaksi.`
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await walletChannelService.delete(row.id);
+      if (!res.success) throw new Error(res.message);
+      toast.success(res.message || 'Kanal dihapus');
+      t.reload();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
   return (
     <div>
       <PageHeader
@@ -108,12 +127,25 @@ export default function WalletChannelsPage() {
             key: 'a',
             label: '',
             render: (row) => (
-              <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => setModal({ open: true, row })} className="text-brand-600 hover:underline">
-                  <Pencil className="mr-1 inline h-3.5 w-3.5" /> Edit
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  title="Ubah"
+                  onClick={() => setModal({ open: true, row })}
+                  className={iconActionEdit}
+                >
+                  <Pencil className="h-4 w-4" />
                 </button>
-                <button type="button" onClick={() => toggleActive(row)} className="text-slate-600 hover:underline">
-                  {row.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                <button
+                  type="button"
+                  title={row.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                  onClick={() => toggleActive(row)}
+                  className={row.is_active ? iconActionToggleOff : iconActionToggleOn}
+                >
+                  <Power className="h-4 w-4" />
+                </button>
+                <button type="button" title="Hapus kanal" onClick={() => removeChannel(row)} className={iconActionDelete}>
+                  <Trash2 className="h-4 w-4" />
                 </button>
               </div>
             ),

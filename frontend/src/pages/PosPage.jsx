@@ -380,7 +380,7 @@ export default function PosPage() {
             </div>
             {!cart.walletChannel ? (
               <p className="rounded-lg bg-slate-50 px-2 py-2 text-[11px] leading-relaxed text-slate-600">
-                Pilih <strong>Kanal</strong> di kolom kiri untuk penjualan produk kanal. Laporan harian operator mengikuti kanal yang sama.
+                Pilih <strong>Kanal</strong> di kolom kiri untuk penjualan produk kanal. Di menu <strong>Laporan</strong> → <strong>Riwayat transaksi</strong> Anda bisa mengecek baris per produk dan kanal.
               </p>
             ) : null}
             <div>

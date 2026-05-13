@@ -8,6 +8,7 @@ import { useServerTable } from '@/hooks/useServerTable';
 import { userService } from '@/services/userService';
 import { branchService } from '@/services/branchService';
 import { workShiftService } from '@/services/workShiftService';
+import { iconActionEdit } from '@/utils/iconActionButton';
 
 export default function UsersPage() {
   const fetcher = useCallback((p) => userService.list(p), []);
@@ -123,7 +124,7 @@ export default function UsersPage() {
             key: 'actions',
             label: '',
             render: (row) => (
-              <button type="button" className="text-brand-600" onClick={() => setModal({ open: true, row })}>
+              <button type="button" title="Ubah" className={iconActionEdit} onClick={() => setModal({ open: true, row })}>
                 <Pencil className="h-4 w-4" />
               </button>
             ),

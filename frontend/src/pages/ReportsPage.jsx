@@ -3,9 +3,8 @@ import toast from 'react-hot-toast';
 import { FileSpreadsheet, FileText } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
-import { DailyShiftReport } from '@/components/DailyShiftReport';
 import { reportService } from '@/services/reportService';
-import { formatCurrency, formatExportDate, formatReportDay, formatReportPeriod } from '@/utils/format';
+import { formatCurrency, formatExportDate, formatExportDateTime, formatReportDay, formatReportPeriod } from '@/utils/format';
 import { useAuth } from '@/contexts/AuthContext';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -14,7 +13,7 @@ import autoTable from 'jspdf-autotable';
 const tabs = [
   { id: 'sales', label: 'Penjualan agregat' },
   { id: 'omset_daily', label: 'Omset harian' },
-  { id: 'daily', label: 'Harian operator' },
+  { id: 'transaction_lines', label: 'Riwayat transaksi' },
   { id: 'pl', label: 'Laba rugi (per trx)' },
   { id: 'stock', label: 'Stok' },
   { id: 'bestsellers', label: 'Produk terlaris' },
@@ -45,10 +44,25 @@ function rowsForSheet(tab, period, rows) {
       Simpel: Number(r.omset_simpel) || 0,
       Digipos: Number(r.omset_digipos) || 0,
       Bonafit: Number(r.omset_bonafit) || 0,
+      Sidiva: Number(r.omset_sidiva) || 0,
       'Kanal lain': Number(r.omset_wallet_lain) || 0,
       'Jumlah transaksi': Number(r.trx_count) || 0,
       'Total omset': Number(r.total_omset) || 0,
       'Laba bersih (est.)': Number(r.net_profit) || 0,
+    }));
+  }
+  if (tab === 'transaction_lines') {
+    return rows.map((r) => ({
+      Tanggal: formatExportDateTime(r.created_at),
+      Cabang: r.branch_name,
+      Kasir: r.cashier_name,
+      Invoice: r.sale_number,
+      Produk: r.product_name,
+      SKU: r.sku || '—',
+      Qty: Number(r.quantity) || 0,
+      'Harga satuan': formatCurrency(r.unit_price),
+      Subtotal: formatCurrency(r.line_subtotal),
+      Kanal: r.channel_display,
     }));
   }
   if (tab === 'pl') {
@@ -156,14 +170,29 @@ export default function ReportsPage() {
   const [omsetCashiers, setOmsetCashiers] = useState([]);
   const [omsetLoading, setOmsetLoading] = useState(false);
 
+  const [histFrom, setHistFrom] = useState(rangeInit.from);
+  const [histTo, setHistTo] = useState(rangeInit.to);
+  const [histBranchId, setHistBranchId] = useState('');
+  const [histCashierId, setHistCashierId] = useState('');
+  const [histRows, setHistRows] = useState([]);
+  const [histBranches, setHistBranches] = useState([]);
+  const [histCashiers, setHistCashiers] = useState([]);
+  const [histLoading, setHistLoading] = useState(false);
+  const [histPage, setHistPage] = useState(1);
+  const [histTotalPages, setHistTotalPages] = useState(1);
+  const [histTotal, setHistTotal] = useState(0);
+  const histLimit = 40;
+
   useEffect(() => {
     if (user?.role_slug === 'admin_cabang' && user.branch_id) {
-      setOmsetBranchId(String(user.branch_id));
+      const bid = String(user.branch_id);
+      setOmsetBranchId(bid);
+      setHistBranchId(bid);
     }
   }, [user?.role_slug, user?.branch_id]);
 
   const load = async () => {
-    if (tab === 'daily' || tab === 'omset_daily') return;
+    if (tab === 'omset_daily' || tab === 'transaction_lines') return;
     setLoading(true);
     try {
       let res;
@@ -203,6 +232,31 @@ export default function ReportsPage() {
     }
   }, [omsetFrom, omsetTo, omsetBranchId, omsetCashierId]);
 
+  const loadHist = useCallback(async () => {
+    setHistLoading(true);
+    try {
+      const params = { from: histFrom, to: histTo, page: histPage, limit: histLimit };
+      if (histBranchId) params.branch_id = Number(histBranchId);
+      if (histCashierId) params.cashier_user_id = Number(histCashierId);
+      const res = await reportService.transactionLines(params);
+      if (!res.success) throw new Error(res.message);
+      const pack = res.data || {};
+      setHistRows(Array.isArray(pack.rows) ? pack.rows : []);
+      setHistBranches(Array.isArray(pack.branches) ? pack.branches : []);
+      setHistCashiers(Array.isArray(pack.cashiers) ? pack.cashiers : []);
+      const pg = res.pagination || {};
+      setHistTotal(Number(pg.total) || 0);
+      setHistTotalPages(Number(pg.totalPages) || 1);
+    } catch (e) {
+      toast.error(e.message);
+      setHistRows([]);
+      setHistTotal(0);
+      setHistTotalPages(1);
+    } finally {
+      setHistLoading(false);
+    }
+  }, [histFrom, histTo, histBranchId, histCashierId, histPage, histLimit]);
+
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -213,6 +267,11 @@ export default function ReportsPage() {
     loadOmset();
   }, [tab, loadOmset]);
 
+  useEffect(() => {
+    if (tab !== 'transaction_lines') return;
+    loadHist();
+  }, [tab, loadHist]);
+
   const columns = useMemo(() => reportColumns(tab, period), [tab, period]);
 
   const omsetTotals = useMemo(() => {
@@ -222,6 +281,7 @@ export default function ReportsPage() {
       simpel: 0,
       digipos: 0,
       bonafit: 0,
+      sidiva: 0,
       wallet_lain: 0,
       trx: 0,
       total_omset: 0,
@@ -233,6 +293,7 @@ export default function ReportsPage() {
       t.simpel += Number(r.omset_simpel) || 0;
       t.digipos += Number(r.omset_digipos) || 0;
       t.bonafit += Number(r.omset_bonafit) || 0;
+      t.sidiva += Number(r.omset_sidiva) || 0;
       t.wallet_lain += Number(r.omset_wallet_lain) || 0;
       t.trx += Number(r.trx_count) || 0;
       t.total_omset += Number(r.total_omset) || 0;
@@ -243,7 +304,11 @@ export default function ReportsPage() {
   }, [omsetRows]);
 
   const exportExcel = () => {
-    const data = rowsForSheet(tab, period, tab === 'omset_daily' ? omsetRows : rows);
+    const data = rowsForSheet(
+      tab,
+      period,
+      tab === 'omset_daily' ? omsetRows : tab === 'transaction_lines' ? histRows : rows
+    );
     const ws = XLSX.utils.json_to_sheet(data.length ? data : [{ Info: 'Tidak ada data' }]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, tab.slice(0, 28));
@@ -265,7 +330,7 @@ export default function ReportsPage() {
         formatCurrency(r.gross_profit_estimate),
       ]);
     } else if (tab === 'omset_daily') {
-      head = [['Tanggal', 'Penjualan', 'Grosiran', 'Simpel', 'Digipos', 'Bonafit', 'Kanal lain', 'Trx', 'Total omset', 'Laba bersih']];
+      head = [['Tanggal', 'Penjualan', 'Grosiran', 'Simpel', 'Digipos', 'Bonafit', 'Sidiva', 'Kanal lain', 'Trx', 'Total omset', 'Laba bersih']];
       body = omsetRows.map((r) => [
         formatReportDay(r.report_date),
         formatCurrency(r.omset_penjualan),
@@ -273,10 +338,25 @@ export default function ReportsPage() {
         formatCurrency(r.omset_simpel),
         formatCurrency(r.omset_digipos),
         formatCurrency(r.omset_bonafit),
+        formatCurrency(r.omset_sidiva),
         formatCurrency(r.omset_wallet_lain),
         String(r.trx_count ?? ''),
         formatCurrency(r.total_omset),
         formatCurrency(r.net_profit),
+      ]);
+    } else if (tab === 'transaction_lines') {
+      head = [['Tanggal', 'Cabang', 'Kasir', 'Invoice', 'Produk', 'SKU', 'Qty', 'Harga sat.', 'Subtotal', 'Kanal']];
+      body = histRows.map((r) => [
+        formatExportDateTime(r.created_at),
+        r.branch_name,
+        r.cashier_name,
+        r.sale_number,
+        r.product_name,
+        r.sku || '—',
+        String(r.quantity ?? ''),
+        formatCurrency(r.unit_price),
+        formatCurrency(r.line_subtotal),
+        r.channel_display,
       ]);
     } else if (tab === 'pl') {
       head = [['No Invoice', 'Tanggal', 'Subtotal', 'COGS', 'Grand']];
@@ -313,10 +393,10 @@ export default function ReportsPage() {
   const noop = () => {};
 
   const subtitle =
-    tab === 'daily'
-      ? 'Grosir + saldo Simpel / Digipos / Bonafit (isi saldo & pilih kanal di POS)'
-      : tab === 'omset_daily'
-        ? 'Kolom penjualan–Bonafit adalah omset; laba bersih = estimasi (total − COGS). Filter cabang, kasir, dan rentang tanggal.'
+    tab === 'omset_daily'
+      ? 'Kolom penjualan–Sidiva adalah omset per kanal; Kanal lain = pembayaran kanal lain; laba bersih = estimasi (total − COGS). Filter cabang, kasir, dan rentang tanggal.'
+      : tab === 'transaction_lines'
+        ? 'Setiap baris adalah item penjualan: nama produk (stok atau produk kanal) dan kanal pembayaran / konteks (Ecer, Grosir). Filter rentang tanggal, cabang, serta kasir atau karyawan.'
         : 'Tabel ringkas — export PDF & Excel';
 
   return (
@@ -405,11 +485,14 @@ export default function ReportsPage() {
           </div>
         </div>
       )}
-      {tab !== 'daily' && (
-        <div className="mb-4 flex flex-wrap gap-2">
+      <div className="mb-4 flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => (tab === 'omset_daily' ? loadOmset() : load())}
+            onClick={() => {
+              if (tab === 'omset_daily') loadOmset();
+              else if (tab === 'transaction_lines') loadHist();
+              else load();
+            }}
             className="rounded-xl border border-slate-200 px-4 py-2 text-sm"
           >
             Refresh
@@ -429,13 +512,10 @@ export default function ReportsPage() {
             <FileText className="h-4 w-4" /> PDF
           </button>
         </div>
-      )}
 
-      {tab === 'daily' ? (
-        <DailyShiftReport />
-      ) : tab === 'omset_daily' ? (
+      {tab === 'omset_daily' ? (
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full min-w-[900px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[1020px] border-collapse text-left text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-600">
                 <th className="whitespace-nowrap px-3 py-3">Hari / tanggal</th>
@@ -444,6 +524,7 @@ export default function ReportsPage() {
                 <th className="whitespace-nowrap px-3 py-3">Simpel</th>
                 <th className="whitespace-nowrap px-3 py-3">Digipos</th>
                 <th className="whitespace-nowrap px-3 py-3">Bonafit</th>
+                <th className="whitespace-nowrap px-3 py-3">Sidiva</th>
                 <th className="whitespace-nowrap px-3 py-3">Kanal lain</th>
                 <th className="whitespace-nowrap px-3 py-3">Jumlah trx</th>
                 <th className="whitespace-nowrap px-3 py-3">Total omset</th>
@@ -453,7 +534,7 @@ export default function ReportsPage() {
             <tbody>
               {omsetLoading && (
                 <tr>
-                  <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
+                  <td colSpan={11} className="px-3 py-8 text-center text-slate-500">
                     Memuat…
                   </td>
                 </tr>
@@ -467,6 +548,7 @@ export default function ReportsPage() {
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.omset_simpel)}</td>
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.omset_digipos)}</td>
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.omset_bonafit)}</td>
+                    <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.omset_sidiva)}</td>
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.omset_wallet_lain)}</td>
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-700">{r.trx_count ?? 0}</td>
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums font-medium text-slate-900">{formatCurrency(r.total_omset)}</td>
@@ -475,7 +557,7 @@ export default function ReportsPage() {
                 ))}
               {!omsetLoading && !omsetRows.length && (
                 <tr>
-                  <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
+                  <td colSpan={11} className="px-3 py-8 text-center text-slate-500">
                     Tidak ada data di rentang ini
                   </td>
                 </tr>
@@ -490,6 +572,7 @@ export default function ReportsPage() {
                   <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.simpel)}</td>
                   <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.digipos)}</td>
                   <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.bonafit)}</td>
+                  <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.sidiva)}</td>
                   <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.wallet_lain)}</td>
                   <td className="px-3 py-2.5 tabular-nums">{omsetTotals.trx}</td>
                   <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.total_omset)}</td>
@@ -499,7 +582,7 @@ export default function ReportsPage() {
                   <td className="px-3 py-2">Rata-rata / hari</td>
                   <td className="px-3 py-2 tabular-nums">{formatCurrency(omsetTotals.avgPenjualan)}</td>
                   <td className="px-3 py-2 tabular-nums">{formatCurrency(omsetTotals.avgGrosiran)}</td>
-                  <td colSpan={7} className="px-3 py-2 text-slate-500">
+                  <td colSpan={8} className="px-3 py-2 text-slate-500">
                     ({omsetTotals.dayCount} hari bertransaksi)
                   </td>
                 </tr>
@@ -507,6 +590,150 @@ export default function ReportsPage() {
             )}
           </table>
         </div>
+      ) : tab === 'transaction_lines' ? (
+        <>
+          <div className="mb-4 flex flex-wrap items-end gap-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600">Dari</label>
+              <input
+                type="date"
+                value={histFrom}
+                onChange={(e) => {
+                  setHistFrom(e.target.value);
+                  setHistPage(1);
+                }}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600">Sampai</label>
+              <input
+                type="date"
+                value={histTo}
+                onChange={(e) => {
+                  setHistTo(e.target.value);
+                  setHistPage(1);
+                }}
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+              />
+            </div>
+            {isSuper && (
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Cabang</label>
+                <select
+                  value={histBranchId}
+                  onChange={(e) => {
+                    setHistBranchId(e.target.value);
+                    setHistCashierId('');
+                    setHistPage(1);
+                  }}
+                  className="min-w-[200px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                >
+                  <option value="">Semua cabang</option>
+                  {histBranches.map((b) => (
+                    <option key={b.id} value={String(b.id)}>
+                      {b.code} — {b.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600">Kasir / karyawan</label>
+              <select
+                value={histCashierId}
+                onChange={(e) => {
+                  setHistCashierId(e.target.value);
+                  setHistPage(1);
+                }}
+                className="min-w-[200px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+              >
+                <option value="">Semua</option>
+                {histCashiers.map((c) => (
+                  <option key={c.id} value={String(c.id)}>
+                    {c.full_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <table className="w-full min-w-[960px] border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  <th className="whitespace-nowrap px-3 py-3">Tanggal & jam</th>
+                  <th className="whitespace-nowrap px-3 py-3">Cabang</th>
+                  <th className="whitespace-nowrap px-3 py-3">Kasir</th>
+                  <th className="whitespace-nowrap px-3 py-3">Invoice</th>
+                  <th className="min-w-[8rem] px-3 py-3">Produk</th>
+                  <th className="whitespace-nowrap px-3 py-3">SKU</th>
+                  <th className="whitespace-nowrap px-3 py-3">Qty</th>
+                  <th className="whitespace-nowrap px-3 py-3">Harga sat.</th>
+                  <th className="whitespace-nowrap px-3 py-3">Subtotal</th>
+                  <th className="whitespace-nowrap px-3 py-3">Kanal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {histLoading && (
+                  <tr>
+                    <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
+                      Memuat…
+                    </td>
+                  </tr>
+                )}
+                {!histLoading &&
+                  histRows.map((r) => (
+                    <tr key={r.line_id} className="border-b border-slate-100 hover:bg-slate-50/80">
+                      <td className="whitespace-nowrap px-3 py-2.5 text-slate-800">{formatExportDateTime(r.created_at)}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-slate-800">{r.branch_name}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-slate-800">{r.cashier_name}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-slate-900">{r.sale_number}</td>
+                      <td className="px-3 py-2.5 font-medium text-slate-900">{r.product_name}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-slate-600">{r.sku || '—'}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{r.quantity}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.unit_price)}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 tabular-nums font-medium text-slate-900">{formatCurrency(r.line_subtotal)}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-xs text-slate-700">{r.channel_display}</td>
+                    </tr>
+                  ))}
+                {!histLoading && !histRows.length && (
+                  <tr>
+                    <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
+                      Tidak ada baris di rentang dan filter ini
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
+            <p>
+              Menampilkan {histRows.length} baris
+              {histTotal ? ` dari ${histTotal} baris` : ''}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={histPage <= 1 || histLoading}
+                onClick={() => setHistPage((p) => Math.max(1, p - 1))}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium hover:bg-slate-50 disabled:opacity-40"
+              >
+                Sebelumnya
+              </button>
+              <span className="tabular-nums text-slate-800">
+                Halaman {histPage} / {histTotalPages || 1}
+              </span>
+              <button
+                type="button"
+                disabled={histPage >= (histTotalPages || 1) || histLoading}
+                onClick={() => setHistPage((p) => p + 1)}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium hover:bg-slate-50 disabled:opacity-40"
+              >
+                Berikutnya
+              </button>
+            </div>
+          </div>
+        </>
       ) : (
         <DataTable
           hideControls

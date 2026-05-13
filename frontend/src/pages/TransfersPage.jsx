@@ -12,6 +12,7 @@ import { branchService } from '@/services/branchService';
 import { useAuth } from '@/contexts/AuthContext';
 import { confirmToast } from '@/utils/confirm';
 import { formatReportDay } from '@/utils/format';
+import { iconActionDelete, iconActionNeutral, iconActionToggleOn } from '@/utils/iconActionButton';
 
 function todayISO() {
   const d = new Date();
@@ -196,16 +197,16 @@ export default function TransfersPage() {
             key: 'a',
             label: '',
             render: (row) => (
-              <div className="flex gap-2">
-                <button type="button" className="text-brand-600" onClick={() => openDetail(row.id)}>
+              <div className="flex gap-1.5">
+                <button type="button" title="Detail" className={iconActionNeutral} onClick={() => openDetail(row.id)}>
                   <Eye className="h-4 w-4" />
                 </button>
                 {isSuper && row.status === 'pending' && (
                   <>
-                    <button type="button" className="text-emerald-600" onClick={() => approve(row.id)}>
+                    <button type="button" title="Setujui" className={iconActionToggleOn} onClick={() => approve(row.id)}>
                       <Check className="h-4 w-4" />
                     </button>
-                    <button type="button" className="text-red-600" onClick={() => reject(row.id)}>
+                    <button type="button" title="Tolak" className={iconActionDelete} onClick={() => reject(row.id)}>
                       <XCircle className="h-4 w-4" />
                     </button>
                   </>

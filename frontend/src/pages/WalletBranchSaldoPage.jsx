@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Link } from 'react-router-dom';
+import { Eye, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { useAuth } from '@/contexts/AuthContext';
 import { branchService } from '@/services/branchService';
@@ -8,6 +9,7 @@ import { walletChannelService } from '@/services/walletChannelService';
 import { reportService } from '@/services/reportService';
 import { saleService } from '@/services/saleService';
 import { formatCurrency } from '@/utils/format';
+import { iconActionDelete, iconActionNeutral } from '@/utils/iconActionButton';
 
 function todayISO() {
   const d = new Date();
@@ -349,19 +351,20 @@ export default function WalletBranchSaldoPage() {
                       {Number(r.amount_out) > 0 ? formatCurrency(Number(r.amount_out)) : '—'}
                     </td>
                     <td className="px-3 py-2 text-right">
-                      <div className="flex flex-wrap items-center justify-end gap-2">
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
                         {r.kind === 'sale' && r.sale_id ? (
-                          <Link to={`/sales/${r.sale_id}`} className="text-brand-600 hover:underline">
-                            Detail
+                          <Link to={`/sales/${r.sale_id}`} title="Detail transaksi" className={iconActionNeutral}>
+                            <Eye className="h-4 w-4" />
                           </Link>
                         ) : null}
                         <button
                           type="button"
+                          title="Hapus baris"
                           disabled={deletingKey === `${r.kind}-${r.ref_id}`}
                           onClick={() => deleteActivityRow(r)}
-                          className="text-red-600 hover:underline disabled:opacity-50"
+                          className={iconActionDelete}
                         >
-                          Hapus
+                          <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
                     </td>
