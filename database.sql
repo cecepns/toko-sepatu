@@ -10,6 +10,8 @@ SET FOREIGN_KEY_CHECKS = 0;
 DROP TABLE IF EXISTS activity_logs;
 DROP TABLE IF EXISTS payments;
 DROP TABLE IF EXISTS sale_items;
+DROP TABLE IF EXISTS wallet_channel_products;
+DROP TABLE IF EXISTS wallet_channels;
 DROP TABLE IF EXISTS sales;
 DROP TABLE IF EXISTS stock_mutations;
 DROP TABLE IF EXISTS stock_transfer_items;
@@ -326,6 +328,40 @@ CREATE TABLE resellers (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ------------------------------------------------------------
+-- wallet_channels (kanal saldo aplikasi — dinamis)
+-- ------------------------------------------------------------
+CREATE TABLE wallet_channels (
+  id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  slug VARCHAR(32) NOT NULL UNIQUE,
+  label VARCHAR(64) NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO wallet_channels (slug, label, sort_order, is_active) VALUES
+  ('simpel', 'Simpel', 1, 1),
+  ('digipos', 'Digipos', 2, 1),
+  ('bonafit', 'Bonafit', 3, 1);
+
+-- ------------------------------------------------------------
+-- wallet_channel_products (master penjualan kanal, tanpa stok)
+-- ------------------------------------------------------------
+CREATE TABLE wallet_channel_products (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  channel_id INT UNSIGNED NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  default_cost DECIMAL(14,2) NOT NULL DEFAULT 0 COMMENT 'Modal / estimasi potong saldo',
+  default_sale_price DECIMAL(14,2) NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_wcp_channel_active (channel_id, is_active),
+  CONSTRAINT fk_wcp_channel FOREIGN KEY (channel_id) REFERENCES wallet_channels(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ------------------------------------------------------------
 -- sales
 -- ------------------------------------------------------------
 CREATE TABLE sales (
@@ -356,21 +392,24 @@ CREATE TABLE sales (
 CREATE TABLE sale_items (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   sale_id BIGINT UNSIGNED NOT NULL,
-  product_id INT UNSIGNED NOT NULL,
+  product_id INT UNSIGNED NULL COMMENT 'NULL jika baris produk kanal aplikasi',
+  wallet_channel_product_id BIGINT UNSIGNED NULL DEFAULT NULL,
   quantity INT NOT NULL,
   unit_price DECIMAL(14,2) NOT NULL,
   line_subtotal DECIMAL(14,2) NOT NULL,
   is_wholesale_line TINYINT(1) NOT NULL DEFAULT 0,
   CONSTRAINT fk_si_sale FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
   CONSTRAINT fk_si_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
-  INDEX idx_si_sale (sale_id)
+  CONSTRAINT fk_si_wallet_channel_product FOREIGN KEY (wallet_channel_product_id) REFERENCES wallet_channel_products(id) ON DELETE RESTRICT,
+  INDEX idx_si_sale (sale_id),
+  INDEX idx_si_wallet_product (wallet_channel_product_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE payments (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   sale_id BIGINT UNSIGNED NOT NULL,
   method ENUM('cash','transfer','card','qris','other') NOT NULL DEFAULT 'cash',
-  wallet_channel VARCHAR(24) NULL DEFAULT NULL COMMENT 'simpel|digipos|bonafit — top-up via aplikasi',
+  wallet_channel VARCHAR(48) NULL DEFAULT NULL COMMENT 'slug kanal dari wallet_channels',
   amount DECIMAL(14,2) NOT NULL,
   paid_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_pay_sale FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
@@ -385,7 +424,7 @@ CREATE TABLE wallet_daily_snapshots (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   branch_id INT UNSIGNED NOT NULL,
   snapshot_date DATE NOT NULL,
-  channel VARCHAR(24) NOT NULL,
+  channel VARCHAR(48) NOT NULL,
   opening_balance DECIMAL(14,2) NOT NULL DEFAULT 0,
   closing_balance DECIMAL(14,2) NULL,
   notes VARCHAR(255) NULL,
@@ -404,7 +443,7 @@ CREATE TABLE wallet_manual_lines (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   branch_id INT UNSIGNED NOT NULL,
   line_date DATE NOT NULL,
-  channel VARCHAR(24) NOT NULL COMMENT 'simpel|digipos|bonafit',
+  channel VARCHAR(48) NOT NULL COMMENT 'slug wallet_channels',
   customer_phone VARCHAR(32) NULL,
   description VARCHAR(255) NOT NULL,
   cost_amount DECIMAL(14,2) NOT NULL DEFAULT 0 COMMENT 'Modal — estimasi potong saldo aplikasi',
@@ -424,7 +463,7 @@ CREATE TABLE wallet_topup_lines (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   branch_id INT UNSIGNED NOT NULL,
   topup_date DATE NOT NULL,
-  channel VARCHAR(24) NOT NULL COMMENT 'simpel|digipos|bonafit',
+  channel VARCHAR(48) NOT NULL COMMENT 'slug wallet_channels',
   amount DECIMAL(14,2) NOT NULL COMMENT 'Nominal saldo masuk',
   notes VARCHAR(255) NULL,
   created_by INT UNSIGNED NULL,

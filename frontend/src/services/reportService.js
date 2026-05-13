@@ -15,4 +15,6 @@ export const reportService = {
   listWalletTopups: (params) => api.get('/api/wallet-topups', { params }).then((r) => r.data),
   addWalletTopup: (body) => api.post('/api/wallet-topups', body).then((r) => r.data),
   deleteWalletTopup: (id) => api.delete(`/api/wallet-topups/${id}`).then((r) => r.data),
+  walletBranchSummary: (params) => api.get('/api/wallet-branch-balance/summary', { params }).then((r) => r.data),
+  walletBranchActivity: (params) => api.get('/api/wallet-branch-balance/activity', { params }).then((r) => r.data),
 };

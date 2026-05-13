@@ -45,6 +45,7 @@ function rowsForSheet(tab, period, rows) {
       Simpel: Number(r.omset_simpel) || 0,
       Digipos: Number(r.omset_digipos) || 0,
       Bonafit: Number(r.omset_bonafit) || 0,
+      'Kanal lain': Number(r.omset_wallet_lain) || 0,
       'Jumlah transaksi': Number(r.trx_count) || 0,
       'Total omset': Number(r.total_omset) || 0,
       'Laba bersih (est.)': Number(r.net_profit) || 0,
@@ -219,6 +220,7 @@ export default function ReportsPage() {
       simpel: 0,
       digipos: 0,
       bonafit: 0,
+      wallet_lain: 0,
       trx: 0,
       total_omset: 0,
       net_profit: 0,
@@ -229,6 +231,7 @@ export default function ReportsPage() {
       t.simpel += Number(r.omset_simpel) || 0;
       t.digipos += Number(r.omset_digipos) || 0;
       t.bonafit += Number(r.omset_bonafit) || 0;
+      t.wallet_lain += Number(r.omset_wallet_lain) || 0;
       t.trx += Number(r.trx_count) || 0;
       t.total_omset += Number(r.total_omset) || 0;
       t.net_profit += Number(r.net_profit) || 0;
@@ -260,7 +263,7 @@ export default function ReportsPage() {
         formatCurrency(r.gross_profit_estimate),
       ]);
     } else if (tab === 'omset_daily') {
-      head = [['Tanggal', 'Penjualan', 'Grosiran', 'Simpel', 'Digipos', 'Bonafit', 'Trx', 'Total omset', 'Laba bersih']];
+      head = [['Tanggal', 'Penjualan', 'Grosiran', 'Simpel', 'Digipos', 'Bonafit', 'Kanal lain', 'Trx', 'Total omset', 'Laba bersih']];
       body = omsetRows.map((r) => [
         formatReportDay(r.report_date),
         formatCurrency(r.omset_penjualan),
@@ -268,6 +271,7 @@ export default function ReportsPage() {
         formatCurrency(r.omset_simpel),
         formatCurrency(r.omset_digipos),
         formatCurrency(r.omset_bonafit),
+        formatCurrency(r.omset_wallet_lain),
         String(r.trx_count ?? ''),
         formatCurrency(r.total_omset),
         formatCurrency(r.net_profit),
@@ -437,6 +441,7 @@ export default function ReportsPage() {
                 <th className="whitespace-nowrap px-3 py-3">Simpel</th>
                 <th className="whitespace-nowrap px-3 py-3">Digipos</th>
                 <th className="whitespace-nowrap px-3 py-3">Bonafit</th>
+                <th className="whitespace-nowrap px-3 py-3">Kanal lain</th>
                 <th className="whitespace-nowrap px-3 py-3">Jumlah trx</th>
                 <th className="whitespace-nowrap px-3 py-3">Total omset</th>
                 <th className="whitespace-nowrap px-3 py-3">Laba bersih</th>
@@ -445,7 +450,7 @@ export default function ReportsPage() {
             <tbody>
               {omsetLoading && (
                 <tr>
-                  <td colSpan={9} className="px-3 py-8 text-center text-slate-500">
+                  <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
                     Memuat…
                   </td>
                 </tr>
@@ -459,6 +464,7 @@ export default function ReportsPage() {
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.omset_simpel)}</td>
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.omset_digipos)}</td>
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.omset_bonafit)}</td>
+                    <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.omset_wallet_lain)}</td>
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-700">{r.trx_count ?? 0}</td>
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums font-medium text-slate-900">{formatCurrency(r.total_omset)}</td>
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-emerald-800">{formatCurrency(r.net_profit)}</td>
@@ -466,7 +472,7 @@ export default function ReportsPage() {
                 ))}
               {!omsetLoading && !omsetRows.length && (
                 <tr>
-                  <td colSpan={9} className="px-3 py-8 text-center text-slate-500">
+                  <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
                     Tidak ada data di rentang ini
                   </td>
                 </tr>
@@ -481,6 +487,7 @@ export default function ReportsPage() {
                   <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.simpel)}</td>
                   <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.digipos)}</td>
                   <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.bonafit)}</td>
+                  <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.wallet_lain)}</td>
                   <td className="px-3 py-2.5 tabular-nums">{omsetTotals.trx}</td>
                   <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.total_omset)}</td>
                   <td className="px-3 py-2.5 tabular-nums text-emerald-900">{formatCurrency(omsetTotals.net_profit)}</td>
@@ -489,7 +496,7 @@ export default function ReportsPage() {
                   <td className="px-3 py-2">Rata-rata / hari</td>
                   <td className="px-3 py-2 tabular-nums">{formatCurrency(omsetTotals.avgPenjualan)}</td>
                   <td className="px-3 py-2 tabular-nums">{formatCurrency(omsetTotals.avgGrosiran)}</td>
-                  <td colSpan={6} className="px-3 py-2 text-slate-500">
+                  <td colSpan={7} className="px-3 py-2 text-slate-500">
                     ({omsetTotals.dayCount} hari bertransaksi)
                   </td>
                 </tr>

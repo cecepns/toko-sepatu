@@ -5,7 +5,7 @@ import { reportService } from '@/services/reportService';
 import { branchService } from '@/services/branchService';
 import { formatCurrency } from '@/utils/format';
 
-const CHANNELS = [
+const FALLBACK_CHANNELS = [
   { slug: 'simpel', label: 'SIMPEL' },
   { slug: 'digipos', label: 'DIGIPOS' },
   { slug: 'bonafit', label: 'BONAFIT' },
@@ -21,6 +21,7 @@ function todayISO() {
 
 function lineRowKey(r, i) {
   if (r.manual_line_id != null) return `m-${r.manual_line_id}`;
+  if (r.id != null) return `si-${r.id}`;
   return `p-${r.sale_number ?? 'x'}-${i}`;
 }
 
@@ -71,17 +72,17 @@ function LineTable({ rows, showPhone, onDeleteManual }) {
   );
 }
 
-const emptyManual = () => ({
-  simpel: { phone: '', desc: '', cost: '', sale: '' },
-  digipos: { phone: '', desc: '', cost: '', sale: '' },
-  bonafit: { phone: '', desc: '', cost: '', sale: '' },
-});
+const emptyManual = (slugs) =>
+  slugs.reduce((acc, slug) => {
+    acc[slug] = { phone: '', desc: '', cost: '', sale: '' };
+    return acc;
+  }, {});
 
-const emptyTopup = () => ({
-  simpel: { amount: '', notes: '' },
-  digipos: { amount: '', notes: '' },
-  bonafit: { amount: '', notes: '' },
-});
+const emptyTopup = (slugs) =>
+  slugs.reduce((acc, slug) => {
+    acc[slug] = { amount: '', notes: '' };
+    return acc;
+  }, {});
 
 export function DailyShiftReport() {
   const { user } = useAuth();
@@ -92,13 +93,9 @@ export function DailyShiftReport() {
   const [branches, setBranches] = useState([]);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [snapForm, setSnapForm] = useState({
-    simpel: { opening: '', closing: '', notes: '' },
-    digipos: { opening: '', closing: '', notes: '' },
-    bonafit: { opening: '', closing: '', notes: '' },
-  });
-  const [manualForm, setManualForm] = useState(emptyManual);
-  const [topupForm, setTopupForm] = useState(emptyTopup);
+  const [snapForm, setSnapForm] = useState({});
+  const [manualForm, setManualForm] = useState(() => emptyManual(FALLBACK_CHANNELS.map((c) => c.slug)));
+  const [topupForm, setTopupForm] = useState(() => emptyTopup(FALLBACK_CHANNELS.map((c) => c.slug)));
 
   useEffect(() => {
     if (user?.role_slug !== 'super_admin' || user?.branch_id) return;
@@ -124,16 +121,21 @@ export function DailyShiftReport() {
       const res = await reportService.dailyShift({ date, branch_id: effectiveBranch });
       if (!res.success) throw new Error(res.message);
       setData(res.data);
-      const next = { ...snapForm };
-      for (const { slug } of CHANNELS) {
+      const defs = res.data?.channel_defs?.length ? res.data.channel_defs : FALLBACK_CHANNELS;
+      const slugs = defs.map((d) => d.slug);
+      setManualForm(emptyManual(slugs));
+      setTopupForm(emptyTopup(slugs));
+      const nextSnap = {};
+      for (const d of defs) {
+        const slug = d.slug;
         const s = res.data?.snapshots?.[slug];
-        next[slug] = {
+        nextSnap[slug] = {
           opening: s?.opening_balance != null ? String(s.opening_balance) : '',
           closing: s?.closing_balance != null ? String(s.closing_balance) : '',
           notes: s?.notes || '',
         };
       }
-      setSnapForm(next);
+      setSnapForm(nextSnap);
     } catch (e) {
       toast.error(e.message);
       setData(null);
@@ -148,7 +150,7 @@ export function DailyShiftReport() {
 
   const saveSnap = async (slug) => {
     if (!canEditSnap || !effectiveBranch) return;
-    const f = snapForm[slug];
+    const f = snapForm[slug] || { opening: '', closing: '', notes: '' };
     try {
       const res = await reportService.saveWalletSnapshot({
         branch_id: effectiveBranch,
@@ -250,6 +252,7 @@ export function DailyShiftReport() {
 
   const grosir = data?.grosir || [];
   const grosirTotal = data?.grosir_total ?? 0;
+  const channelList = data?.channel_defs?.length ? data.channel_defs : FALLBACK_CHANNELS;
 
   return (
     <div className="space-y-6">
@@ -304,7 +307,7 @@ export function DailyShiftReport() {
           </section>
 
           <div className="grid gap-4 lg:grid-cols-3">
-            {CHANNELS.map(({ slug, label }) => {
+            {channelList.map(({ slug, label }) => {
               const ch = data.channels?.[slug] || {
                 lines: [],
                 total_jual: 0,
@@ -484,7 +487,7 @@ export function DailyShiftReport() {
             <h4 className="font-semibold text-slate-900">Ringkasan</h4>
             <ul className="mt-2 space-y-1 text-slate-700">
               <li>Total penjualan grosir: {formatCurrency(grosirTotal)}</li>
-              {CHANNELS.map(({ slug, label }) => (
+              {channelList.map(({ slug, label }) => (
                 <li key={slug}>
                   Total {label}: {formatCurrency(data.channels?.[slug]?.total_jual ?? 0)}
                   <span className="text-slate-500"> — modal estimasi {formatCurrency(data.channels?.[slug]?.total_modal ?? 0)}</span>

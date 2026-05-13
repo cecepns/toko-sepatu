@@ -122,6 +122,7 @@ export default function DashboardPage() {
               { label: 'Simpel', v: tom.simpel },
               { label: 'Digipos', v: tom.digipos },
               { label: 'Bonafit', v: tom.bonafit },
+              ...(Number(tom.wallet_lain) > 0 ? [{ label: 'Kanal lain', v: tom.wallet_lain }] : []),
               { label: 'Total omset', v: tom.total_omset, bold: true },
               { label: 'Laba bersih (est.)', v: tom.net_profit, accent: true },
             ].map((x) => (

@@ -18,6 +18,9 @@ import {
   X,
   BarChart3,
   Clock,
+  Radio,
+  Smartphone,
+  Banknote,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { ROLES } from '@/utils/constants';
@@ -27,11 +30,15 @@ const nav = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['super_admin', 'admin_cabang', 'kasir', 'karyawan'] },
   { to: '/pos', label: 'POS', icon: ShoppingCart, roles: ['super_admin', 'admin_cabang', 'kasir'] },
   { to: '/sales', label: 'Riwayat Transaksi', icon: Receipt, roles: ['super_admin', 'admin_cabang', 'kasir'] },
+  { to: '/sales/wallet', label: 'Penjualan kanal', icon: Smartphone, roles: ['super_admin', 'admin_cabang', 'kasir'] },
   { to: '/branches', label: 'Cabang', icon: Building2, roles: ['super_admin', 'admin_cabang'] },
   { to: '/users', label: 'Pengguna', icon: Users, roles: ['super_admin', 'admin_cabang'] },
   { to: '/categories', label: 'Kategori', icon: Tags, roles: ['super_admin', 'admin_cabang'] },
   { to: '/units', label: 'Satuan', icon: Ruler, roles: ['super_admin', 'admin_cabang'] },
   { to: '/products', label: 'Produk', icon: Package, roles: ['super_admin', 'admin_cabang'] },
+  { to: '/wallet-channels', label: 'Kanal aplikasi', icon: Radio, roles: ['super_admin', 'admin_cabang'] },
+  { to: '/wallet-channel-products', label: 'Produk kanal', icon: Smartphone, roles: ['super_admin', 'admin_cabang'] },
+  { to: '/wallet-branch-saldo', label: 'Saldo kanal cabang', icon: Banknote, roles: ['super_admin', 'admin_cabang'] },
   { to: '/stock-central', label: 'Stok Pusat', icon: Warehouse, roles: ['super_admin', 'admin_cabang'] },
   { to: '/stock-branch', label: 'Stok Cabang', icon: Store, roles: ['super_admin', 'admin_cabang', 'kasir'] },
   { to: '/transfers', label: 'Transfer Stok', icon: ArrowLeftRight, roles: ['super_admin', 'admin_cabang', 'kasir'] },
@@ -77,7 +84,13 @@ export function DashboardLayout() {
         </div>
         <nav className="scrollbar-thin min-h-0 flex-1 space-y-1 overflow-y-auto p-3">
           {items.map((item) => (
-            <NavLink key={item.to} to={item.to} className={linkClass} onClick={() => setOpen(false)} end={item.to === '/'}>
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={linkClass}
+              onClick={() => setOpen(false)}
+              end={item.to === '/' || item.to === '/sales'}
+            >
               <item.icon className="h-5 w-5 shrink-0" />
               {item.label}
             </NavLink>

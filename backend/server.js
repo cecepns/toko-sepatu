@@ -80,6 +80,34 @@ function parsePagination(query) {
   return { page, limit, offset, search, sort, order };
 }
 
+/** Subquery join: COGS per sale (produk stok + produk kanal) */
+function sqlSaleItemsCogsSubquery() {
+  return `SELECT si.sale_id, SUM(si.quantity * COALESCE(pr.hpp, wcp.default_cost, 0)) AS cogs
+    FROM sale_items si
+    LEFT JOIN products pr ON pr.id = si.product_id
+    LEFT JOIN wallet_channel_products wcp ON wcp.id = si.wallet_channel_product_id
+    GROUP BY si.sale_id`;
+}
+
+/** Scalar subquery: COGS satu sale (untuk laporan per-invoice) */
+function sqlSingleSaleCogsScalar() {
+  return `(SELECT COALESCE(SUM(si.quantity * COALESCE(pr.hpp, wcp.default_cost, 0)), 0)
+    FROM sale_items si
+    LEFT JOIN products pr ON pr.id = si.product_id
+    LEFT JOIN wallet_channel_products wcp ON wcp.id = si.wallet_channel_product_id
+    WHERE si.sale_id = s.id)`;
+}
+
+async function isWalletChannelActive(pool, slug) {
+  const s = String(slug || '')
+    .toLowerCase()
+    .trim()
+    .slice(0, 48);
+  if (!s) return false;
+  const [r] = await pool.query(`SELECT 1 FROM wallet_channels WHERE slug=:s AND is_active=1 LIMIT 1`, { s });
+  return !!r[0];
+}
+
 async function countTotal(conn, sql, params = []) {
   const [rows] = await conn.query(sql, params);
   return rows[0]?.total ?? 0;
@@ -1256,6 +1284,132 @@ app.delete('/api/resellers/:id', authMiddleware, requireRoles('super_admin', 'ad
   }
 });
 
+/* Wallet channels (master kanal) + produk kanal */
+app.get('/api/wallet-channels', authMiddleware, async (req, res) => {
+  try {
+    const activeOnly = req.query.active_only === '1' || req.query.active_only === 'true';
+    let sql = 'SELECT id, slug, label, sort_order, is_active FROM wallet_channels WHERE 1=1';
+    if (activeOnly) sql += ' AND is_active=1';
+    if (req.user.role_slug === 'kasir' || req.user.role_slug === 'karyawan') sql += ' AND is_active=1';
+    sql += ' ORDER BY sort_order ASC, id ASC';
+    const [rows] = await pool.query(sql);
+    return ok(res, rows, '');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+app.post('/api/wallet-channels', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const slug = String(req.body.slug || '')
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9_]/g, '');
+    const label = String(req.body.label || '').trim();
+    const sort_order = Number(req.body.sort_order) || 0;
+    if (!slug || !label) return fail(res, 400, 'Slug (a-z, angka, _) dan label wajib');
+    if (slug.length < 2) return fail(res, 400, 'Slug minimal 2 karakter');
+    const [ins] = await pool.query(
+      `INSERT INTO wallet_channels (slug, label, sort_order, is_active) VALUES (:slug, :label, :so, 1)`,
+      { slug, label, so: sort_order }
+    );
+    return ok(res, { id: ins.insertId, slug, label }, 'Kanal dibuat');
+  } catch (e) {
+    if (e.code === 'ER_DUP_ENTRY') return fail(res, 400, 'Slug sudah dipakai');
+    return fail(res, 500, e.message);
+  }
+});
+
+app.put('/api/wallet-channels/:id', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const label = String(req.body.label || '').trim();
+    const sort_order = req.body.sort_order != null ? Number(req.body.sort_order) : null;
+    const is_active = req.body.is_active === false || req.body.is_active === 0 || req.body.is_active === '0' ? 0 : 1;
+    if (!label) return fail(res, 400, 'Label wajib');
+    await pool.query(
+      `UPDATE wallet_channels SET label=:label, sort_order=COALESCE(:so, sort_order), is_active=:ia WHERE id=:id`,
+      { id, label, so: sort_order, ia: is_active }
+    );
+    return ok(res, { id }, 'Kanal diperbarui');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+app.get('/api/wallet-channel-products', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
+  try {
+    const channelId = req.query.channel_id != null && req.query.channel_id !== '' ? Number(req.query.channel_id) : null;
+    const slug = String(req.query.channel_slug || '')
+      .toLowerCase()
+      .trim()
+      .slice(0, 48);
+    let where = ' WHERE 1=1 ';
+    const params = {};
+    if (channelId) {
+      where += ' AND wcp.channel_id = :cid ';
+      params.cid = channelId;
+    } else if (slug) {
+      where += ' AND wc.slug = :slug ';
+      params.slug = slug;
+    }
+    if (req.query.active_only === '1' || req.query.active_only === 'true') where += ' AND wcp.is_active=1 ';
+    const [rows] = await pool.query(
+      `SELECT wcp.*, wc.slug AS channel_slug, wc.label AS channel_label
+       FROM wallet_channel_products wcp
+       JOIN wallet_channels wc ON wc.id = wcp.channel_id
+       ${where}
+       ORDER BY wcp.name ASC`,
+      params
+    );
+    return ok(res, rows, '');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+app.post('/api/wallet-channel-products', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const channel_id = Number(req.body.channel_id);
+    const name = String(req.body.name || '').trim();
+    const default_cost = Number(req.body.default_cost) || 0;
+    const default_sale_price = Number(req.body.default_sale_price) || 0;
+    if (!channel_id || !name) return fail(res, 400, 'Kanal & nama wajib');
+    const [ch] = await pool.query(`SELECT id FROM wallet_channels WHERE id=:id LIMIT 1`, { id: channel_id });
+    if (!ch[0]) return fail(res, 400, 'Kanal tidak ada');
+    const [ins] = await pool.query(
+      `INSERT INTO wallet_channel_products (channel_id, name, default_cost, default_sale_price, is_active)
+       VALUES (:cid, :name, :dc, :dsp, 1)`,
+      { cid: channel_id, name, dc: default_cost, dsp: default_sale_price }
+    );
+    return ok(res, { id: ins.insertId }, 'Produk kanal dibuat');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+app.put('/api/wallet-channel-products/:id', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const name = String(req.body.name || '').trim();
+    const default_cost = req.body.default_cost != null ? Number(req.body.default_cost) : null;
+    const default_sale_price = req.body.default_sale_price != null ? Number(req.body.default_sale_price) : null;
+    const is_active = req.body.is_active === false || req.body.is_active === 0 || req.body.is_active === '0' ? 0 : 1;
+    if (!name) return fail(res, 400, 'Nama wajib');
+    await pool.query(
+      `UPDATE wallet_channel_products SET name=:name,
+        default_cost = COALESCE(:dc, default_cost),
+        default_sale_price = COALESCE(:dsp, default_sale_price),
+        is_active=:ia
+       WHERE id=:id`,
+      { id, name, dc: default_cost, dsp: default_sale_price, ia: is_active }
+    );
+    return ok(res, { id }, 'Produk kanal diperbarui');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
 /* POS: create sale */
 function saleNumber() {
   return `INV-${Date.now()}-${Math.floor(Math.random() * 900 + 100)}`;
@@ -1282,9 +1436,13 @@ app.post('/api/sales', authMiddleware, requireRoles('super_admin', 'admin_cabang
     }
     if (!Array.isArray(items) || !items.length) return fail(res, 400, 'Keranjang kosong');
 
+    const hasWalletLineInput = items.some((ln) => {
+      const w = ln.wallet_channel_product_id;
+      return w != null && String(w).trim() !== '' && !Number.isNaN(Number(w));
+    });
     let resellerCtx = false;
     let resellerRowId = null;
-    if (reseller_id) {
+    if (reseller_id && !hasWalletLineInput) {
       const [rs] = await conn.query(
         `SELECT r.id, r.is_active FROM resellers r WHERE r.id=:rid AND r.is_active=1`,
         { rid: reseller_id }
@@ -1296,32 +1454,108 @@ app.post('/api/sales', authMiddleware, requireRoles('super_admin', 'admin_cabang
     }
 
     await conn.beginTransaction();
+    const wcRaw = wallet_channel ? String(wallet_channel).toLowerCase().trim().slice(0, 48) : '';
+    let wcResolved = null;
+    if (wcRaw) {
+      const okCh = await isWalletChannelActive(conn, wcRaw);
+      if (!okCh) {
+        await conn.rollback();
+        return fail(res, 400, 'Kanal aplikasi tidak valid atau nonaktif');
+      }
+      wcResolved = wcRaw;
+    }
+
     let subtotal = 0;
     const lineRows = [];
+    let hasStock = false;
+    let hasWallet = false;
+
     for (const line of items) {
-      const [pr] = await conn.query(
-        `SELECT id, retail_price, wholesale_price, min_wholesale_qty, is_active FROM products WHERE id=:id FOR UPDATE`,
-        { id: line.product_id }
-      );
-      const p = pr[0];
-      if (!p || !p.is_active) {
+      const wid =
+        line.wallet_channel_product_id != null && line.wallet_channel_product_id !== ''
+          ? Number(line.wallet_channel_product_id)
+          : null;
+      const pid = line.product_id != null && line.product_id !== '' ? Number(line.product_id) : null;
+      if (wid && pid) {
         await conn.rollback();
-        return fail(res, 400, `Produk ${line.product_id} tidak tersedia`);
+        return fail(res, 400, 'Satu baris hanya produk stok atau produk kanal');
       }
-      const qty = Number(line.quantity) || 0;
-      if (qty <= 0) {
+      if (!wid && !pid) {
         await conn.rollback();
-        return fail(res, 400, 'Qty tidak valid');
+        return fail(res, 400, 'Baris keranjang tidak valid');
       }
-      let unit = Number(p.retail_price);
-      let isWh = 0;
-      if (resellerCtx && qty >= Number(p.min_wholesale_qty)) {
-        unit = Number(p.wholesale_price);
-        isWh = 1;
+
+      if (wid) {
+        hasWallet = true;
+        const [wrows] = await conn.query(
+          `SELECT wcp.id, wcp.name, wcp.default_cost, wcp.default_sale_price, wcp.is_active, wc.slug AS channel_slug
+           FROM wallet_channel_products wcp
+           JOIN wallet_channels wc ON wc.id = wcp.channel_id
+           WHERE wcp.id=:id FOR UPDATE`,
+          { id: wid }
+        );
+        const wcp = wrows[0];
+        if (!wcp || !wcp.is_active) {
+          await conn.rollback();
+          return fail(res, 400, `Produk kanal tidak tersedia`);
+        }
+        if (!wcResolved || wcp.channel_slug !== wcResolved) {
+          await conn.rollback();
+          return fail(res, 400, 'Produk kanal harus sesuai kanal yang dipilih di POS');
+        }
+        const qty = Number(line.quantity) || 0;
+        if (qty <= 0) {
+          await conn.rollback();
+          return fail(res, 400, 'Qty tidak valid');
+        }
+        let unit =
+          line.unit_price != null && line.unit_price !== '' ? Number(line.unit_price) : Number(wcp.default_sale_price);
+        if (Number.isNaN(unit) || unit < 0) {
+          await conn.rollback();
+          return fail(res, 400, 'Harga jual tidak valid');
+        }
+        const lineSub = unit * qty;
+        subtotal += lineSub;
+        lineRows.push({ kind: 'wallet', wallet_channel_product_id: wcp.id, qty, unit, lineSub, isWh: 0 });
+      } else {
+        hasStock = true;
+        const [pr] = await conn.query(
+          `SELECT id, retail_price, wholesale_price, min_wholesale_qty, is_active FROM products WHERE id=:id FOR UPDATE`,
+          { id: pid }
+        );
+        const p = pr[0];
+        if (!p || !p.is_active) {
+          await conn.rollback();
+          return fail(res, 400, `Produk ${pid} tidak tersedia`);
+        }
+        const qty = Number(line.quantity) || 0;
+        if (qty <= 0) {
+          await conn.rollback();
+          return fail(res, 400, 'Qty tidak valid');
+        }
+        let unit = Number(p.retail_price);
+        let isWh = 0;
+        if (resellerCtx && qty >= Number(p.min_wholesale_qty)) {
+          unit = Number(p.wholesale_price);
+          isWh = 1;
+        }
+        const lineSub = unit * qty;
+        subtotal += lineSub;
+        lineRows.push({ kind: 'stock', product_id: p.id, qty, unit, lineSub, isWh });
       }
-      const lineSub = unit * qty;
-      subtotal += lineSub;
-      lineRows.push({ product_id: p.id, qty, unit, lineSub, isWh });
+    }
+
+    if (hasStock && hasWallet) {
+      await conn.rollback();
+      return fail(res, 400, 'Campuran produk stok dan produk kanal tidak diperbolehkan');
+    }
+    if (hasWallet && !wcResolved) {
+      await conn.rollback();
+      return fail(res, 400, 'Pilih kanal aplikasi untuk penjualan produk kanal');
+    }
+    if (hasStock && wcResolved) {
+      await conn.rollback();
+      return fail(res, 400, 'Penjualan stok cabang: kosongkan kanal saldo aplikasi');
     }
 
     const disc = Number(discount_amount) || 0;
@@ -1352,33 +1586,38 @@ app.post('/api/sales', authMiddleware, requireRoles('super_admin', 'admin_cabang
     );
     const saleId = ins.insertId;
     for (const lr of lineRows) {
-      await conn.query(
-        `INSERT INTO sale_items (sale_id, product_id, quantity, unit_price, line_subtotal, is_wholesale_line)
-         VALUES (:sid, :pid, :qty, :up, :ls, :wh)`,
-        { sid: saleId, pid: lr.product_id, qty: lr.qty, up: lr.unit, ls: lr.lineSub, wh: lr.isWh }
-      );
-      const [sb] = await conn.query(
-        `SELECT quantity FROM stock_branch WHERE branch_id=:bid AND product_id=:pid FOR UPDATE`,
-        { bid, pid: lr.product_id }
-      );
-      if (!sb[0] || sb[0].quantity < lr.qty) {
-        await conn.rollback();
-        return fail(res, 400, `Stok cabang tidak cukup untuk produk ${lr.product_id}`);
+      if (lr.kind === 'wallet') {
+        await conn.query(
+          `INSERT INTO sale_items (sale_id, product_id, wallet_channel_product_id, quantity, unit_price, line_subtotal, is_wholesale_line)
+           VALUES (:sid, NULL, :wcpid, :qty, :up, :ls, :wh)`,
+          { sid: saleId, wcpid: lr.wallet_channel_product_id, qty: lr.qty, up: lr.unit, ls: lr.lineSub, wh: lr.isWh }
+        );
+      } else {
+        await conn.query(
+          `INSERT INTO sale_items (sale_id, product_id, wallet_channel_product_id, quantity, unit_price, line_subtotal, is_wholesale_line)
+           VALUES (:sid, :pid, NULL, :qty, :up, :ls, :wh)`,
+          { sid: saleId, pid: lr.product_id, qty: lr.qty, up: lr.unit, ls: lr.lineSub, wh: lr.isWh }
+        );
+        const [sb] = await conn.query(
+          `SELECT quantity FROM stock_branch WHERE branch_id=:bid AND product_id=:pid FOR UPDATE`,
+          { bid, pid: lr.product_id }
+        );
+        if (!sb[0] || sb[0].quantity < lr.qty) {
+          await conn.rollback();
+          return fail(res, 400, `Stok cabang tidak cukup untuk produk ${lr.product_id}`);
+        }
+        await conn.query(
+          `UPDATE stock_branch SET quantity = quantity - :q WHERE branch_id=:bid AND product_id=:pid`,
+          { q: lr.qty, bid, pid: lr.product_id }
+        );
+        await conn.query(
+          `INSERT INTO stock_mutations (branch_id, product_id, mutation_type, quantity_delta, ref_type, ref_id, notes, created_by)
+           VALUES (:bid, :pid, 'pos_sale', :d, 'sale', :sid, 'Penjualan POS', :uid)`,
+          { bid, pid: lr.product_id, d: -lr.qty, sid: saleId, uid: req.user.id }
+        );
       }
-      await conn.query(
-        `UPDATE stock_branch SET quantity = quantity - :q WHERE branch_id=:bid AND product_id=:pid`,
-        { q: lr.qty, bid, pid: lr.product_id }
-      );
-      await conn.query(
-        `INSERT INTO stock_mutations (branch_id, product_id, mutation_type, quantity_delta, ref_type, ref_id, notes, created_by)
-         VALUES (:bid, :pid, 'pos_sale', :d, 'sale', :sid, 'Penjualan POS', :uid)`,
-        { bid, pid: lr.product_id, d: -lr.qty, sid: saleId, uid: req.user.id }
-      );
     }
-    const wc =
-      wallet_channel && ['simpel', 'digipos', 'bonafit'].includes(String(wallet_channel).toLowerCase())
-        ? String(wallet_channel).toLowerCase()
-        : null;
+    const wc = wcResolved;
     await conn.query(
       `INSERT INTO payments (sale_id, method, wallet_channel, amount) VALUES (:sid, :m, :wc, :amt)`,
       { sid: saleId, m: payment_method || 'cash', amt: grand, wc }
@@ -1409,13 +1648,21 @@ app.get('/api/sales', authMiddleware, async (req, res) => {
       where += ' AND (s.sale_number LIKE :s OR c.name LIKE :s) ';
       params.s = `%${search}%`;
     }
+    if (req.query.wallet_sale === '1' || req.query.wallet_sale === 'true') {
+      where += ` AND EXISTS (
+        SELECT 1 FROM payments pw WHERE pw.sale_id = s.id
+        AND pw.wallet_channel IS NOT NULL AND pw.wallet_channel != ''
+      ) `;
+    }
     const sortCol = ['id', 'grand_total', 'created_at'].includes(sort) ? `s.${sort}` : 's.id';
     const [rows] = await pool.query(
-      `SELECT SQL_CALC_FOUND_ROWS s.*, u.full_name AS cashier_name, c.name AS customer_name, rs.company_name AS reseller_company
+      `SELECT SQL_CALC_FOUND_ROWS s.*, u.full_name AS cashier_name, c.name AS customer_name, rs.company_name AS reseller_company,
+        pay.wallet_channel AS wallet_channel
        FROM sales s
        JOIN users u ON u.id = s.cashier_user_id
        LEFT JOIN customers c ON c.id = s.customer_id
        LEFT JOIN resellers rs ON rs.id = s.reseller_id
+       LEFT JOIN payments pay ON pay.sale_id = s.id AND pay.id = (SELECT MIN(p2.id) FROM payments p2 WHERE p2.sale_id = s.id)
        ${where}
        ORDER BY ${sortCol} ${order} LIMIT :limit OFFSET :offset`,
       { ...params, limit, offset }
@@ -1440,7 +1687,14 @@ app.get('/api/sales/:id', authMiddleware, async (req, res) => {
       return fail(res, 403, 'Akses ditolak');
     }
     const [items] = await pool.query(
-      `SELECT si.*, p.name AS product_name, p.sku FROM sale_items si JOIN products p ON p.id=si.product_id WHERE si.sale_id=:id`,
+      `SELECT si.*,
+        COALESCE(p.name, wcp.name) AS product_name,
+        COALESCE(p.sku, '') AS sku,
+        COALESCE(p.hpp, wcp.default_cost) AS hpp
+       FROM sale_items si
+       LEFT JOIN products p ON p.id = si.product_id
+       LEFT JOIN wallet_channel_products wcp ON wcp.id = si.wallet_channel_product_id
+       WHERE si.sale_id=:id`,
       { id }
     );
     const [pays] = await pool.query(`SELECT * FROM payments WHERE sale_id=:id`, { id });
@@ -1621,6 +1875,7 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
         SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) = 'simpel' THEN s.grand_total ELSE 0 END) AS omset_simpel,
         SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) = 'digipos' THEN s.grand_total ELSE 0 END) AS omset_digipos,
         SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) = 'bonafit' THEN s.grand_total ELSE 0 END) AS omset_bonafit,
+        SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) NOT IN ('simpel','digipos','bonafit') AND p.wallet_channel IS NOT NULL AND p.wallet_channel != '' THEN s.grand_total ELSE 0 END) AS omset_wallet_lain,
         SUM(CASE WHEN (p.wallet_channel IS NULL OR p.wallet_channel = '') AND s.is_wholesale_context = 1 THEN s.grand_total ELSE 0 END) AS omset_grosiran,
         SUM(CASE WHEN (p.wallet_channel IS NULL OR p.wallet_channel = '') AND s.is_wholesale_context = 0 THEN s.grand_total ELSE 0 END) AS omset_penjualan,
         COUNT(DISTINCT s.id) AS trx_count,
@@ -1629,9 +1884,7 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
       FROM sales s
       LEFT JOIN payments p ON p.sale_id = s.id AND p.id = (SELECT MIN(p2.id) FROM payments p2 WHERE p2.sale_id = s.id)
       LEFT JOIN (
-        SELECT si.sale_id, SUM(si.quantity * pr.hpp) AS cogs
-        FROM sale_items si JOIN products pr ON pr.id = si.product_id
-        GROUP BY si.sale_id
+        ${sqlSaleItemsCogsSubquery()}
       ) c ON c.sale_id = s.id
       WHERE DATE(s.created_at) = CURDATE() ${omsetBranch}`,
       omsetParams
@@ -1643,6 +1896,7 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
       simpel: Number(tom.omset_simpel) || 0,
       digipos: Number(tom.omset_digipos) || 0,
       bonafit: Number(tom.omset_bonafit) || 0,
+      wallet_lain: Number(tom.omset_wallet_lain) || 0,
       total_omset: Number(tom.total_omset) || 0,
       trx_count: Number(tom.trx_count) || 0,
       net_profit: Number(tom.net_profit) || 0,
@@ -1687,16 +1941,22 @@ app.get('/api/reports/daily-shift', authMiddleware, requireRoles('super_admin', 
       base
     );
 
-    const channelKeys = ['simpel', 'digipos', 'bonafit'];
+    const [channelDefs] = await pool.query(
+      `SELECT slug, label FROM wallet_channels WHERE is_active=1 ORDER BY sort_order ASC, id ASC`
+    );
     const channels = {};
-    for (const ch of channelKeys) {
+    for (const def of channelDefs) {
+      const ch = def.slug;
       const [lines] = await pool.query(
-        `SELECT si.quantity, si.unit_price, si.line_subtotal, p.name AS product_name, p.sku, p.hpp,
-                s.sale_number, c.phone AS customer_phone
+        `SELECT si.quantity, si.unit_price, si.line_subtotal,
+          COALESCE(p.name, wcp.name) AS product_name, COALESCE(p.sku, '') AS sku,
+          COALESCE(p.hpp, wcp.default_cost) AS hpp,
+          s.sale_number, c.phone AS customer_phone
          FROM sale_items si
          JOIN sales s ON s.id = si.sale_id
-         INNER JOIN payments pay ON pay.sale_id = s.id AND pay.wallet_channel = :ch
-         JOIN products p ON p.id = si.product_id
+         INNER JOIN payments pay ON pay.sale_id = s.id AND LOWER(pay.wallet_channel) = LOWER(:ch)
+         LEFT JOIN products p ON p.id = si.product_id
+         LEFT JOIN wallet_channel_products wcp ON wcp.id = si.wallet_channel_product_id
          LEFT JOIN customers c ON c.id = s.customer_id
          WHERE s.branch_id = :bid AND DATE(s.created_at) = :d
          ORDER BY s.id, si.id`,
@@ -1755,6 +2015,7 @@ app.get('/api/reports/daily-shift', authMiddleware, requireRoles('super_admin', 
         branch_id: bid,
         grosir,
         grosir_total,
+        channel_defs: channelDefs,
         channels,
         snapshots,
       },
@@ -1772,7 +2033,7 @@ app.put('/api/wallet-snapshots', authMiddleware, requireRoles('super_admin', 'ad
     const d = (snapshot_date || '').toString().slice(0, 10);
     const ch = (channel || '').toString().toLowerCase();
     if (!bid || !d || !ch) return fail(res, 400, 'branch_id, snapshot_date, channel wajib');
-    if (!['simpel', 'digipos', 'bonafit'].includes(ch)) return fail(res, 400, 'Channel harus simpel, digipos, atau bonafit');
+    if (!(await isWalletChannelActive(pool, ch))) return fail(res, 400, 'Channel tidak valid atau nonaktif');
     if (req.user.role_slug === 'admin_cabang' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
     const ob = opening_balance != null && opening_balance !== '' ? Number(opening_balance) : 0;
     const cb = closing_balance != null && closing_balance !== '' ? Number(closing_balance) : null;
@@ -1801,6 +2062,16 @@ function resolveBranchIdForWalletQuery(req) {
   return bid;
 }
 
+/** Cabang untuk rekap saldo kanal: super_admin wajib ?branch_id= */
+function resolveBranchIdForBalanceReport(req) {
+  if (req.user.role_slug === 'super_admin') {
+    const q = req.query.branch_id;
+    if (q == null || q === '' || Number(q) <= 0) return 0;
+    return Number(q);
+  }
+  return Number(req.user.branch_id) || 0;
+}
+
 /* Daftar baris manual saldo kanal (untuk POS / rekonsiliasi) */
 app.get('/api/wallet-manual-lines', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
   try {
@@ -1810,7 +2081,8 @@ app.get('/api/wallet-manual-lines', authMiddleware, requireRoles('super_admin', 
     if (req.user.role_slug === 'kasir' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
     const d = (req.query.line_date || '').toString().slice(0, 10) || new Date().toISOString().slice(0, 10);
     const ch = (req.query.channel || '').toString().toLowerCase();
-    if (!['simpel', 'digipos', 'bonafit'].includes(ch)) return fail(res, 400, 'channel wajib (simpel, digipos, bonafit)');
+    if (!ch) return fail(res, 400, 'channel wajib');
+    if (!(await isWalletChannelActive(pool, ch))) return fail(res, 400, 'Channel tidak valid atau nonaktif');
     const [rows] = await pool.query(
       `SELECT id, branch_id, line_date, channel, customer_phone, description, cost_amount, sale_amount, created_at
        FROM wallet_manual_lines WHERE branch_id = :bid AND line_date = :d AND channel = :ch ORDER BY id`,
@@ -1834,7 +2106,8 @@ app.post('/api/wallet-manual-lines', authMiddleware, requireRoles('super_admin',
     if (req.user.role_slug === 'kasir' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
     const d = (line_date || '').toString().slice(0, 10);
     const ch = (channel || '').toString().toLowerCase();
-    if (!d || !['simpel', 'digipos', 'bonafit'].includes(ch)) return fail(res, 400, 'Tanggal & channel wajib (simpel, digipos, bonafit)');
+    if (!d || !ch) return fail(res, 400, 'Tanggal & channel wajib');
+    if (!(await isWalletChannelActive(pool, ch))) return fail(res, 400, 'Channel tidak valid atau nonaktif');
     const desc = (description || '').toString().trim();
     if (!desc) return fail(res, 400, 'Keterangan wajib');
     const cost = Number(cost_amount);
@@ -1876,7 +2149,8 @@ app.get('/api/wallet-topups', authMiddleware, requireRoles('super_admin', 'admin
     if (req.user.role_slug === 'kasir' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
     const d = (req.query.topup_date || '').toString().slice(0, 10) || new Date().toISOString().slice(0, 10);
     const ch = (req.query.channel || '').toString().toLowerCase();
-    if (!['simpel', 'digipos', 'bonafit'].includes(ch)) return fail(res, 400, 'channel wajib (simpel, digipos, bonafit)');
+    if (!ch) return fail(res, 400, 'channel wajib');
+    if (!(await isWalletChannelActive(pool, ch))) return fail(res, 400, 'Channel tidak valid atau nonaktif');
     const [rows] = await pool.query(
       `SELECT id, branch_id, topup_date, channel, amount, notes, created_at
        FROM wallet_topup_lines WHERE branch_id = :bid AND topup_date = :d AND channel = :ch ORDER BY id`,
@@ -1898,7 +2172,8 @@ app.post('/api/wallet-topups', authMiddleware, requireRoles('super_admin', 'admi
     if (req.user.role_slug === 'kasir' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
     const d = (topup_date || '').toString().slice(0, 10);
     const ch = (channel || '').toString().toLowerCase();
-    if (!d || !['simpel', 'digipos', 'bonafit'].includes(ch)) return fail(res, 400, 'Tanggal & channel wajib');
+    if (!d || !ch) return fail(res, 400, 'Tanggal & channel wajib');
+    if (!(await isWalletChannelActive(pool, ch))) return fail(res, 400, 'Channel tidak valid atau nonaktif');
     const amt = Number(amount);
     if (Number.isNaN(amt) || amt <= 0) return fail(res, 400, 'Nominal saldo masuk harus lebih dari 0');
     const n = notes != null && String(notes).trim() !== '' ? String(notes).trim().slice(0, 255) : null;
@@ -1921,6 +2196,168 @@ app.delete('/api/wallet-topups/:id', authMiddleware, requireRoles('super_admin',
     if (req.user.role_slug !== 'super_admin' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Tidak diizinkan');
     await pool.query(`DELETE FROM wallet_topup_lines WHERE id = :id`, { id });
     return ok(res, null, 'Baris dihapus');
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+/** Rekap saldo kanal per cabang: masuk (top-up) vs keluar (estimasi modal manual + penjualan produk kanal) */
+app.get('/api/wallet-branch-balance/summary', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const bid = resolveBranchIdForBalanceReport(req);
+    if (!bid) return fail(res, 400, 'Cabang wajib');
+    if (req.user.role_slug === 'admin_cabang' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
+    const ch = (req.query.channel || '').toString().toLowerCase().trim().slice(0, 48);
+    if (!ch) return fail(res, 400, 'channel wajib');
+    if (!(await isWalletChannelActive(pool, ch))) return fail(res, 400, 'Channel tidak valid atau nonaktif');
+    const from = (req.query.from || '').toString().trim().slice(0, 10);
+    const to = (req.query.to || '').toString().trim().slice(0, 10);
+    const useRange = /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to) && from <= to;
+    const params = { bid, ch };
+    if (useRange) {
+      params.from = from;
+      params.to = to;
+    }
+    const dateTop = useRange ? ' AND wtl.topup_date BETWEEN :from AND :to ' : '';
+    const dateMan = useRange ? ' AND wml.line_date BETWEEN :from AND :to ' : '';
+    const dateSale = useRange ? ' AND DATE(s.created_at) BETWEEN :from AND :to ' : '';
+    const [top] = await pool.query(
+      `SELECT COALESCE(SUM(wtl.amount), 0) AS t
+       FROM wallet_topup_lines wtl
+       WHERE wtl.branch_id = :bid AND LOWER(wtl.channel) = LOWER(:ch) ${dateTop}`,
+      params
+    );
+    const [man] = await pool.query(
+      `SELECT COALESCE(SUM(wml.cost_amount), 0) AS t
+       FROM wallet_manual_lines wml
+       WHERE wml.branch_id = :bid AND LOWER(wml.channel) = LOWER(:ch) ${dateMan}`,
+      params
+    );
+    const [saleCogs] = await pool.query(
+      `SELECT COALESCE(SUM(si.quantity * wcp.default_cost), 0) AS t
+       FROM sale_items si
+       INNER JOIN wallet_channel_products wcp ON wcp.id = si.wallet_channel_product_id
+       INNER JOIN sales s ON s.id = si.sale_id
+       WHERE s.branch_id = :bid ${dateSale}
+       AND EXISTS (
+         SELECT 1 FROM payments p
+         WHERE p.sale_id = s.id AND LOWER(p.wallet_channel) = LOWER(:ch)
+         AND p.id = (SELECT MIN(p2.id) FROM payments p2 WHERE p2.sale_id = s.id)
+       )`,
+      params
+    );
+    const total_topup = Number(top[0]?.t) || 0;
+    const total_manual_modal = Number(man[0]?.t) || 0;
+    const total_sale_modal = Number(saleCogs[0]?.t) || 0;
+    const total_out = total_manual_modal + total_sale_modal;
+    const balance_estimate = total_topup - total_out;
+    const [br] = await pool.query(`SELECT name FROM branches WHERE id = :bid LIMIT 1`, { bid });
+    return ok(
+      res,
+      {
+        branch_id: bid,
+        branch_name: br[0]?.name || '',
+        channel: ch,
+        date_from: useRange ? from : null,
+        date_to: useRange ? to : null,
+        total_topup,
+        total_manual_modal,
+        total_sale_modal,
+        total_out,
+        balance_estimate,
+      },
+      ''
+    );
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
+/** Riwayat aktivitas saldo kanal per cabang (top-up, manual, penjualan produk kanal) */
+app.get('/api/wallet-branch-balance/activity', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const bid = resolveBranchIdForBalanceReport(req);
+    if (!bid) return fail(res, 400, 'Cabang wajib');
+    if (req.user.role_slug === 'admin_cabang' && Number(req.user.branch_id) !== bid) return fail(res, 403, 'Hanya cabang sendiri');
+    const ch = (req.query.channel || '').toString().toLowerCase().trim().slice(0, 48);
+    if (!ch) return fail(res, 400, 'channel wajib');
+    if (!(await isWalletChannelActive(pool, ch))) return fail(res, 400, 'Channel tidak valid atau nonaktif');
+    const { page, limit, offset } = parsePagination(req.query);
+    const from = (req.query.from || '').toString().trim().slice(0, 10);
+    const to = (req.query.to || '').toString().trim().slice(0, 10);
+    const useRange = /^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to) && from <= to;
+    const params = { bid, ch, limit, offset };
+    if (useRange) {
+      params.from = from;
+      params.to = to;
+    }
+    const dateTop = useRange ? ' AND wtl.topup_date BETWEEN :from AND :to ' : '';
+    const dateMan = useRange ? ' AND wml.line_date BETWEEN :from AND :to ' : '';
+    const dateSale = useRange ? ' AND DATE(s.created_at) BETWEEN :from AND :to ' : '';
+    const [[{ total }]] = await pool.query(
+      `SELECT COUNT(*) AS total FROM (
+        SELECT wtl.id AS rid FROM wallet_topup_lines wtl
+        WHERE wtl.branch_id = :bid AND LOWER(wtl.channel) = LOWER(:ch) ${dateTop}
+        UNION ALL
+        SELECT wml.id FROM wallet_manual_lines wml
+        WHERE wml.branch_id = :bid AND LOWER(wml.channel) = LOWER(:ch) ${dateMan}
+        UNION ALL
+        SELECT s.id FROM sales s
+        WHERE s.branch_id = :bid ${dateSale}
+        AND EXISTS (
+          SELECT 1 FROM payments p WHERE p.sale_id = s.id AND LOWER(p.wallet_channel) = LOWER(:ch)
+          AND p.id = (SELECT MIN(p2.id) FROM payments p2 WHERE p2.sale_id = s.id)
+        )
+        AND EXISTS (
+          SELECT 1 FROM sale_items si0 WHERE si0.sale_id = s.id AND si0.wallet_channel_product_id IS NOT NULL
+        )
+        AND (
+          SELECT COALESCE(SUM(si1.quantity * wcp1.default_cost), 0) FROM sale_items si1
+          INNER JOIN wallet_channel_products wcp1 ON wcp1.id = si1.wallet_channel_product_id
+          WHERE si1.sale_id = s.id
+        ) > 0
+      ) x`,
+      params
+    );
+    const [rows] = await pool.query(
+      `SELECT * FROM (
+        SELECT 'topup' AS kind, wtl.id AS ref_id, wtl.created_at AS sort_ts, wtl.topup_date AS ref_date,
+          CONCAT('Saldo masuk (TF/isi)', IF(IFNULL(wtl.notes,'') <> '', CONCAT(' — ', wtl.notes), '')) AS description,
+          wtl.amount AS amount_in, CAST(0 AS DECIMAL(14,2)) AS amount_out, NULL AS sale_id
+        FROM wallet_topup_lines wtl
+        WHERE wtl.branch_id = :bid AND LOWER(wtl.channel) = LOWER(:ch) ${dateTop}
+        UNION ALL
+        SELECT 'manual', wml.id, wml.created_at, wml.line_date,
+          CONCAT('Manual: ', wml.description),
+          0, wml.cost_amount, NULL
+        FROM wallet_manual_lines wml
+        WHERE wml.branch_id = :bid AND LOWER(wml.channel) = LOWER(:ch) ${dateMan}
+        UNION ALL
+        SELECT 'sale', s.id, s.created_at, DATE(s.created_at),
+          CONCAT('Penjualan ', s.sale_number, ' (est. potong saldo aplikasi)'),
+          CAST(0 AS DECIMAL(14,2)),
+          (
+            SELECT COALESCE(SUM(si2.quantity * wcp2.default_cost), 0) FROM sale_items si2
+            INNER JOIN wallet_channel_products wcp2 ON wcp2.id = si2.wallet_channel_product_id
+            WHERE si2.sale_id = s.id
+          ) AS amount_out,
+          s.id
+        FROM sales s
+        WHERE s.branch_id = :bid ${dateSale}
+        AND EXISTS (
+          SELECT 1 FROM payments p WHERE p.sale_id = s.id AND LOWER(p.wallet_channel) = LOWER(:ch)
+          AND p.id = (SELECT MIN(p2.id) FROM payments p2 WHERE p2.sale_id = s.id)
+        )
+        AND EXISTS (
+          SELECT 1 FROM sale_items si3 WHERE si3.sale_id = s.id AND si3.wallet_channel_product_id IS NOT NULL
+        )
+        HAVING amount_out > 0
+      ) u
+      ORDER BY sort_ts DESC, ref_id DESC
+      LIMIT :limit OFFSET :offset`,
+      params
+    );
+    return ok(res, rows, '', { page, limit, total, totalPages: Math.ceil(total / limit) || 1 });
   } catch (e) {
     return fail(res, 500, e.message);
   }
@@ -1973,6 +2410,7 @@ app.get('/api/reports/daily-omset', authMiddleware, requireRoles('super_admin', 
         SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) = 'simpel' THEN s.grand_total ELSE 0 END) AS omset_simpel,
         SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) = 'digipos' THEN s.grand_total ELSE 0 END) AS omset_digipos,
         SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) = 'bonafit' THEN s.grand_total ELSE 0 END) AS omset_bonafit,
+        SUM(CASE WHEN LOWER(IFNULL(p.wallet_channel,'')) NOT IN ('simpel','digipos','bonafit') AND p.wallet_channel IS NOT NULL AND p.wallet_channel != '' THEN s.grand_total ELSE 0 END) AS omset_wallet_lain,
         SUM(CASE WHEN (p.wallet_channel IS NULL OR p.wallet_channel = '') AND s.is_wholesale_context = 1 THEN s.grand_total ELSE 0 END) AS omset_grosiran,
         SUM(CASE WHEN (p.wallet_channel IS NULL OR p.wallet_channel = '') AND s.is_wholesale_context = 0 THEN s.grand_total ELSE 0 END) AS omset_penjualan,
         COUNT(DISTINCT s.id) AS trx_count,
@@ -1981,9 +2419,7 @@ app.get('/api/reports/daily-omset', authMiddleware, requireRoles('super_admin', 
       FROM sales s
       LEFT JOIN payments p ON p.sale_id = s.id AND p.id = (SELECT MIN(p2.id) FROM payments p2 WHERE p2.sale_id = s.id)
       LEFT JOIN (
-        SELECT si.sale_id, SUM(si.quantity * pr.hpp) AS cogs
-        FROM sale_items si JOIN products pr ON pr.id = si.product_id
-        GROUP BY si.sale_id
+        ${sqlSaleItemsCogsSubquery()}
       ) c ON c.sale_id = s.id
       ${where}
       GROUP BY DATE(s.created_at)
@@ -2049,7 +2485,7 @@ app.get('/api/reports/sales', authMiddleware, requireRoles('super_admin', 'admin
       params.bid = req.user.branch_id;
     }
     const [rows] = await pool.query(
-      `SELECT ${grp} AS period, COUNT(*) AS trx, SUM(s.grand_total) AS revenue, SUM(s.subtotal - (SELECT COALESCE(SUM(si.quantity * pr.hpp),0) FROM sale_items si JOIN products pr ON pr.id=si.product_id WHERE si.sale_id=s.id)) AS gross_profit_estimate
+      `SELECT ${grp} AS period, COUNT(*) AS trx, SUM(s.grand_total) AS revenue, SUM(s.subtotal - ${sqlSingleSaleCogsScalar()}) AS gross_profit_estimate
        FROM sales s ${where} GROUP BY ${grp} ORDER BY period DESC LIMIT 120`,
       params
     );
@@ -2069,7 +2505,7 @@ app.get('/api/reports/pl', authMiddleware, requireRoles('super_admin', 'admin_ca
     }
     const [rows] = await pool.query(
       `SELECT s.id, s.sale_number, s.created_at, s.subtotal, s.discount_amount, s.tax_amount, s.grand_total,
-        (SELECT COALESCE(SUM(si.quantity * pr.hpp),0) FROM sale_items si JOIN products pr ON pr.id=si.product_id WHERE si.sale_id=s.id) AS cogs
+        ${sqlSingleSaleCogsScalar()} AS cogs
        FROM sales s ${where} ORDER BY s.id DESC LIMIT 500`,
       params
     );
@@ -2152,8 +2588,11 @@ app.get('/api/reports/attendance', authMiddleware, requireRoles('super_admin', '
       params.s = `%${search}%`;
     }
     const [rows] = await pool.query(
-      `SELECT SQL_CALC_FOUND_ROWS a.*, u.full_name, e.employee_code FROM attendances a
-       JOIN employees e ON e.id=a.employee_id JOIN users u ON u.id=e.user_id
+      `SELECT SQL_CALC_FOUND_ROWS a.*, u.full_name, e.employee_code, b.name AS branch_name
+       FROM attendances a
+       JOIN employees e ON e.id=a.employee_id
+       JOIN users u ON u.id=e.user_id
+       JOIN branches b ON b.id=a.branch_id
        ${where} ORDER BY a.clock_in_at DESC LIMIT :limit OFFSET :offset`,
       { ...params, limit, offset }
     );

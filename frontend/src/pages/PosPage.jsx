@@ -8,15 +8,8 @@ import { productService } from '@/services/productService';
 import { resellerService } from '@/services/resellerService';
 import { saleService } from '@/services/saleService';
 import { branchService } from '@/services/branchService';
-import { reportService } from '@/services/reportService';
+import { walletChannelService } from '@/services/walletChannelService';
 import { formatCurrency } from '@/utils/format';
-
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-const WALLET_LABEL = { simpel: 'Simpel', digipos: 'Digipos', bonafit: 'Bonafit' };
 
 export default function PosPage() {
   const { user } = useAuth();
@@ -27,12 +20,9 @@ export default function PosPage() {
   const [barcode, setBarcode] = useState('');
   const [branches, setBranches] = useState([]);
   const [branchId, setBranchId] = useState(user?.branch_id || '');
-  const [walletManual, setWalletManual] = useState(null);
-  const [walletManualLoading, setWalletManualLoading] = useState(false);
-  const [wmForm, setWmForm] = useState({ phone: '', desc: '', cost: '', sale: '' });
-  const [walletTopup, setWalletTopup] = useState(null);
-  const [walletTopupLoading, setWalletTopupLoading] = useState(false);
-  const [wtForm, setWtForm] = useState({ amount: '', notes: '' });
+  const [walletChannels, setWalletChannels] = useState([]);
+  const [walletProducts, setWalletProducts] = useState([]);
+  const [walletProductsLoading, setWalletProductsLoading] = useState(false);
 
   useEffect(() => {
     if (!user?.branch_id) {
@@ -66,6 +56,17 @@ export default function PosPage() {
   }, []);
 
   useEffect(() => {
+    (async () => {
+      try {
+        const res = await walletChannelService.list({ active_only: true });
+        if (res.success) setWalletChannels(res.data || []);
+      } catch {
+        setWalletChannels([]);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
     const t = setTimeout(() => search(q, effectiveBranchId), 300);
     return () => clearTimeout(t);
   }, [q, search, effectiveBranchId]);
@@ -81,136 +82,31 @@ export default function PosPage() {
     })();
   }, []);
 
-  const loadWalletManual = useCallback(async () => {
-    const bid = effectiveBranchId;
+  const loadWalletProducts = useCallback(async () => {
     const ch = cart.walletChannel;
-    if (!bid || !ch) {
-      setWalletManual(null);
+    if (!ch) {
+      setWalletProducts([]);
       return;
     }
-    setWalletManualLoading(true);
+    setWalletProductsLoading(true);
     try {
-      const res = await reportService.listWalletManualLines({
-        branch_id: bid,
-        line_date: todayISO(),
-        channel: ch,
-      });
+      const res = await walletChannelService.listProducts({ channel_slug: ch, active_only: 'true' });
       if (!res.success) throw new Error(res.message);
-      setWalletManual(res.data || { lines: [], total_modal: 0, total_sale: 0, profit: 0 });
+      setWalletProducts((res.data || []).filter((p) => p.is_active));
     } catch (e) {
       toast.error(e.message);
-      setWalletManual(null);
+      setWalletProducts([]);
     } finally {
-      setWalletManualLoading(false);
+      setWalletProductsLoading(false);
     }
-  }, [effectiveBranchId, cart.walletChannel]);
+  }, [cart.walletChannel]);
 
   useEffect(() => {
-    loadWalletManual();
-  }, [loadWalletManual]);
-
-  const loadWalletTopups = useCallback(async () => {
-    const bid = effectiveBranchId;
-    const ch = cart.walletChannel;
-    if (!bid || !ch) {
-      setWalletTopup(null);
-      return;
-    }
-    setWalletTopupLoading(true);
-    try {
-      const res = await reportService.listWalletTopups({
-        branch_id: bid,
-        topup_date: todayISO(),
-        channel: ch,
-      });
-      if (!res.success) throw new Error(res.message);
-      setWalletTopup(res.data || { lines: [], total_topup: 0 });
-    } catch (e) {
-      toast.error(e.message);
-      setWalletTopup(null);
-    } finally {
-      setWalletTopupLoading(false);
-    }
-  }, [effectiveBranchId, cart.walletChannel]);
-
-  useEffect(() => {
-    loadWalletTopups();
-  }, [loadWalletTopups]);
-
-  const addWalletManualRow = async () => {
-    const bid = effectiveBranchId;
-    const ch = cart.walletChannel;
-    if (!bid || !ch) return toast.error('Pilih cabang dan kanal saldo aplikasi');
-    const desc = (wmForm.desc || '').trim();
-    if (!desc) return toast.error('Isi keterangan produk');
-    const cost = wmForm.cost === '' ? 0 : Number(wmForm.cost);
-    const sale = wmForm.sale === '' ? 0 : Number(wmForm.sale);
-    if (Number.isNaN(cost) || cost < 0 || Number.isNaN(sale) || sale < 0) return toast.error('Modal dan harga jual harus angka valid');
-    try {
-      const res = await reportService.addWalletManualLine({
-        branch_id: bid,
-        line_date: todayISO(),
-        channel: ch,
-        customer_phone: (wmForm.phone || '').trim() || null,
-        description: desc,
-        cost_amount: cost,
-        sale_amount: sale,
-      });
-      if (!res.success) throw new Error(res.message);
-      toast.success(res.message || 'Baris ditambahkan');
-      setWmForm({ phone: '', desc: '', cost: '', sale: '' });
-      loadWalletManual();
-    } catch (e) {
-      toast.error(e.message);
-    }
-  };
-
-  const deleteWalletManualRow = async (id) => {
-    try {
-      const res = await reportService.deleteWalletManualLine(id);
-      if (!res.success) throw new Error(res.message);
-      toast.success(res.message || 'Dihapus');
-      loadWalletManual();
-    } catch (e) {
-      toast.error(e.message);
-    }
-  };
-
-  const addWalletTopupRow = async () => {
-    const bid = effectiveBranchId;
-    const ch = cart.walletChannel;
-    if (!bid || !ch) return toast.error('Pilih cabang dan kanal saldo aplikasi');
-    const amt = wtForm.amount === '' ? NaN : Number(wtForm.amount);
-    if (Number.isNaN(amt) || amt <= 0) return toast.error('Nominal saldo masuk harus lebih dari 0');
-    try {
-      const res = await reportService.addWalletTopup({
-        branch_id: bid,
-        topup_date: todayISO(),
-        channel: ch,
-        amount: amt,
-        notes: (wtForm.notes || '').trim() || null,
-      });
-      if (!res.success) throw new Error(res.message);
-      toast.success(res.message || 'Saldo masuk tercatat');
-      setWtForm({ amount: '', notes: '' });
-      loadWalletTopups();
-    } catch (e) {
-      toast.error(e.message);
-    }
-  };
-
-  const deleteWalletTopupRow = async (id) => {
-    try {
-      const res = await reportService.deleteWalletTopup(id);
-      if (!res.success) throw new Error(res.message);
-      toast.success(res.message || 'Dihapus');
-      loadWalletTopups();
-    } catch (e) {
-      toast.error(e.message);
-    }
-  };
+    loadWalletProducts();
+  }, [loadWalletProducts]);
 
   const addByBarcode = async () => {
+    if (cart.walletChannel) return toast.error('Matikan kanal aplikasi untuk scan produk stok');
     const code = barcode.trim();
     if (!code) return;
     const bid = user?.branch_id || Number(branchId);
@@ -231,6 +127,9 @@ export default function PosPage() {
 
   const subtotal = useMemo(() => {
     return cart.items.reduce((sum, it) => {
+      if (it.kind === 'wallet_product') {
+        return sum + Number(it.unit_price || 0) * it.quantity;
+      }
       const p = it.product;
       const isRes = !!cart.resellerId;
       const qty = it.quantity;
@@ -240,6 +139,29 @@ export default function PosPage() {
     }, 0);
   }, [cart.items, cart.resellerId]);
 
+  const walletChannelLabel = useMemo(
+    () => walletChannels.find((c) => c.slug === cart.walletChannel)?.label || cart.walletChannel,
+    [walletChannels, cart.walletChannel]
+  );
+
+  const onWalletChannelChange = (e) => {
+    const v = e.target.value;
+    const stockItems = cart.items.filter((i) => i.kind === 'product');
+    const walletItems = cart.items.filter((i) => i.kind === 'wallet_product');
+    if (v && stockItems.length) {
+      toast.error('Hapus produk stok dari keranjang sebelum pilih kanal aplikasi');
+      return;
+    }
+    if (v && cart.walletChannel && v !== cart.walletChannel && walletItems.length) {
+      toast.error('Kosongkan keranjang produk kanal sebelum ganti kanal');
+      return;
+    }
+    if (!v && walletItems.length) {
+      walletItems.forEach((it) => cart.removeWalletItem(it.wallet_channel_product_id));
+    }
+    cart.setMeta({ walletChannel: v });
+  };
+
   const taxAmt = ((Math.max(0, subtotal - Number(cart.discount || 0))) * Number(cart.taxPercent || 0)) / 100;
   const grand = Math.max(0, subtotal - Number(cart.discount || 0)) + taxAmt;
 
@@ -248,11 +170,21 @@ export default function PosPage() {
     const bid = user.branch_id || Number(branchId);
     if (!bid) return toast.error('Pilih cabang');
     try {
+      const items = cart.items.map((i) => {
+        if (i.kind === 'wallet_product') {
+          return {
+            wallet_channel_product_id: i.wallet_channel_product_id,
+            quantity: i.quantity,
+            unit_price: i.unit_price,
+          };
+        }
+        return { product_id: i.product_id, quantity: i.quantity };
+      });
       const body = {
         branch_id: bid,
         customer_id: cart.customerId || null,
         reseller_id: cart.resellerId || null,
-        items: cart.items.map((i) => ({ product_id: i.product_id, quantity: i.quantity })),
+        items,
         discount_amount: Number(cart.discount) || 0,
         tax_percent: Number(cart.taxPercent) || 0,
         notes: cart.notes || '',
@@ -272,7 +204,7 @@ export default function PosPage() {
     <div className="space-y-6">
       <PageHeader
         title="POS / Penjualan"
-        subtitle="Produk katalog = stok cabang. Kanal saldo = catat pulsa/PLN manual (modal vs jual) — sama dengan laporan Harian operator."
+        subtitle="Tanpa kanal: katalog = stok cabang. Dengan kanal: produk master kanal (tanpa stok) — masuk laporan Harian operator."
       />
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -290,64 +222,118 @@ export default function PosPage() {
             </div>
           )}
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-              <ScanBarcode className="h-4 w-4" /> Scan barcode
-            </label>
-            <div className="mt-2 flex gap-2">
-              <input
-                value={barcode}
-                onChange={(e) => setBarcode(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && addByBarcode()}
-                placeholder="Scan / ketik barcode"
-                className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm"
-              />
-              <button type="button" onClick={addByBarcode} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
-                Tambah
-              </button>
-            </div>
+            <label className="text-sm font-medium text-slate-700">Saldo aplikasi (kanal)</label>
+            <select
+              value={cart.walletChannel || ''}
+              onChange={onWalletChannelChange}
+              className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            >
+              <option value="">— Tunai / produk stok cabang —</option>
+              {walletChannels.map((c) => (
+                <option key={c.id} value={c.slug}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            {cart.walletChannel ? (
+              <p className="mt-2 text-xs text-slate-600">
+                Mode kanal: pilih produk dari master kanal di bawah (tidak mengurangi stok). Keranjang stok harus kosong.
+              </p>
+            ) : null}
           </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <label className="text-sm font-medium text-slate-700">Cari produk</label>
-            <input value={q} onChange={(e) => setQ(e.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Nama / SKU" />
-            <ul className="mt-3 max-h-64 divide-y divide-slate-100 overflow-y-auto text-sm">
-              {hits.map((p) => {
-                const stock = Number(p.branch_stock ?? 0);
-                const noBranch = !effectiveBranchId;
-                const outOfStock = effectiveBranchId > 0 && stock < 1;
-                const disabled = noBranch || outOfStock;
-                return (
-                  <li key={p.id}>
-                    <button
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => {
-                        if (disabled) return;
-                        cart.addItem(p, 1);
-                      }}
-                      className={`flex w-full items-center justify-between gap-3 py-3 pl-1 pr-2 text-left sm:pl-2 ${
-                        disabled ? 'cursor-not-allowed opacity-55' : 'cursor-pointer hover:bg-slate-50 active:bg-slate-100'
-                      }`}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="font-medium text-slate-900">{p.name}</div>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
-                          <span>{p.sku}</span>
-                          {effectiveBranchId > 0 ? (
-                            <span className={outOfStock ? 'font-medium text-amber-800' : 'text-slate-600'}>
-                              Stok: {outOfStock ? 'kosong' : stock}
-                            </span>
-                          ) : (
-                            <span className="text-amber-800">Pilih cabang</span>
-                          )}
+          {cart.walletChannel ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <p className="text-sm font-medium text-slate-800">Produk kanal — {walletChannelLabel}</p>
+              <p className="mt-1 text-xs text-slate-500">Tap untuk tambah ke keranjang. Harga jual bisa diubah di kolom kanan.</p>
+              <ul className="mt-3 max-h-72 divide-y divide-slate-100 overflow-y-auto text-sm">
+                {walletProductsLoading ? (
+                  <li className="py-6 text-center text-slate-500">Memuat…</li>
+                ) : !walletProducts.length ? (
+                  <li className="py-6 text-center text-slate-500">Belum ada produk aktif — atur di menu Produk kanal aplikasi.</li>
+                ) : (
+                  walletProducts.map((p) => (
+                    <li key={p.id}>
+                      <button
+                        type="button"
+                        onClick={() => cart.addWalletProduct(p, 1)}
+                        className="flex w-full items-center justify-between gap-3 py-3 pl-1 pr-2 text-left hover:bg-slate-50 sm:pl-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-slate-900">{p.name}</div>
+                          <div className="mt-0.5 text-xs text-slate-500">
+                            Default {formatCurrency(Number(p.default_sale_price))} · modal {formatCurrency(Number(p.default_cost))}
+                          </div>
                         </div>
-                      </div>
-                      {!disabled ? <span className="shrink-0 text-xs font-semibold text-brand-600">+1</span> : null}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
+                        <span className="shrink-0 text-xs font-semibold text-brand-600">+1</span>
+                      </button>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </div>
+          ) : (
+            <>
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <ScanBarcode className="h-4 w-4" /> Scan barcode
+                </label>
+                <div className="mt-2 flex gap-2">
+                  <input
+                    value={barcode}
+                    onChange={(e) => setBarcode(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && addByBarcode()}
+                    placeholder="Scan / ketik barcode"
+                    className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  />
+                  <button type="button" onClick={addByBarcode} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
+                    Tambah
+                  </button>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <label className="text-sm font-medium text-slate-700">Cari produk</label>
+                <input value={q} onChange={(e) => setQ(e.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm" placeholder="Nama / SKU" />
+                <ul className="mt-3 max-h-64 divide-y divide-slate-100 overflow-y-auto text-sm">
+                  {hits.map((p) => {
+                    const stock = Number(p.branch_stock ?? 0);
+                    const noBranch = !effectiveBranchId;
+                    const outOfStock = effectiveBranchId > 0 && stock < 1;
+                    const disabled = noBranch || outOfStock;
+                    return (
+                      <li key={p.id}>
+                        <button
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => {
+                            if (disabled) return;
+                            cart.addItem(p, 1);
+                          }}
+                          className={`flex w-full items-center justify-between gap-3 py-3 pl-1 pr-2 text-left sm:pl-2 ${
+                            disabled ? 'cursor-not-allowed opacity-55' : 'cursor-pointer hover:bg-slate-50 active:bg-slate-100'
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium text-slate-900">{p.name}</div>
+                            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
+                              <span>{p.sku}</span>
+                              {effectiveBranchId > 0 ? (
+                                <span className={outOfStock ? 'font-medium text-amber-800' : 'text-slate-600'}>
+                                  Stok: {outOfStock ? 'kosong' : stock}
+                                </span>
+                              ) : (
+                                <span className="text-amber-800">Pilih cabang</span>
+                              )}
+                            </div>
+                          </div>
+                          {!disabled ? <span className="shrink-0 text-xs font-semibold text-brand-600">+1</span> : null}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -359,6 +345,7 @@ export default function PosPage() {
             <div>
               <label className="text-xs text-slate-500">Reseller (untuk harga grosir)</label>
               <select
+                disabled={!!cart.walletChannel}
                 value={cart.resellerId || ''}
                 onChange={(e) => cart.setMeta({ resellerId: e.target.value ? Number(e.target.value) : null })}
                 className="mt-1 w-full rounded-xl border border-slate-200 px-2 py-2 text-sm"
@@ -391,178 +378,11 @@ export default function PosPage() {
                 />
               </div>
             </div>
-            <div>
-              <label className="text-xs text-slate-500">Saldo aplikasi (top-up / non tunai)</label>
-              <select
-                value={cart.walletChannel || ''}
-                onChange={(e) => cart.setMeta({ walletChannel: e.target.value })}
-                className="mt-1 w-full rounded-xl border border-slate-200 px-2 py-2 text-sm"
-              >
-                <option value="">— Tunai / tidak pakai kanal —</option>
-                <option value="simpel">Simpel</option>
-                <option value="digipos">Digipos</option>
-                <option value="bonafit">Bonafit</option>
-              </select>
-            </div>
             {!cart.walletChannel ? (
               <p className="rounded-lg bg-slate-50 px-2 py-2 text-[11px] leading-relaxed text-slate-600">
-                Pilih <strong>Saldo aplikasi</strong> untuk form <strong>Input manual</strong> (penjualan tanpa master) dan <strong>Saldo masuk</strong> (top-up). Keduanya masuk{' '}
-                <strong>Laporan → Harian operator</strong>.
+                Pilih <strong>Kanal</strong> di kolom kiri untuk penjualan produk kanal. Laporan harian operator mengikuti kanal yang sama.
               </p>
-            ) : (
-              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/90 p-3">
-                <p className="text-xs font-semibold text-slate-800">Input manual — {WALLET_LABEL[cart.walletChannel] || cart.walletChannel}</p>
-                <p className="mt-0.5 text-[11px] text-slate-600">Tanpa master produk. Modal = potong saldo aplikasi. Tercatat per tanggal hari ini.</p>
-                <div className="mt-2 grid gap-2">
-                  <input
-                    type="text"
-                    inputMode="tel"
-                    placeholder="No. HP (opsional)"
-                    value={wmForm.phone}
-                    onChange={(e) => setWmForm((f) => ({ ...f, phone: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Keterangan / nama produk"
-                    value={wmForm.desc}
-                    onChange={(e) => setWmForm((f) => ({ ...f, desc: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm"
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      type="number"
-                      min={0}
-                      step="1"
-                      placeholder="Modal"
-                      value={wmForm.cost}
-                      onChange={(e) => setWmForm((f) => ({ ...f, cost: e.target.value }))}
-                      className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm"
-                    />
-                    <input
-                      type="number"
-                      min={0}
-                      step="1"
-                      placeholder="Harga jual"
-                      value={wmForm.sale}
-                      onChange={(e) => setWmForm((f) => ({ ...f, sale: e.target.value }))}
-                      className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={addWalletManualRow}
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-100"
-                  >
-                    Tambah baris
-                  </button>
-                </div>
-                <div className="mt-3 max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white text-xs">
-                  {walletManualLoading ? (
-                    <p className="p-3 text-center text-slate-500">Memuat…</p>
-                  ) : !(walletManual?.lines || []).length ? (
-                    <p className="p-3 text-center text-slate-500">Belum ada baris hari ini</p>
-                  ) : (
-                    <table className="w-full border-collapse text-left">
-                      <thead>
-                        <tr className="border-b border-slate-100 bg-slate-50 text-slate-600">
-                          <th className="px-2 py-1.5 font-medium">Keterangan</th>
-                          <th className="px-2 py-1.5 text-right font-medium">Modal</th>
-                          <th className="px-2 py-1.5 text-right font-medium">Jual</th>
-                          <th className="w-12" />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(walletManual.lines || []).map((row) => (
-                          <tr key={row.id} className="border-b border-slate-50">
-                            <td className="px-2 py-1.5">
-                              <div className="font-medium text-slate-900">{row.description}</div>
-                              {row.customer_phone ? <div className="text-[10px] text-slate-500">{row.customer_phone}</div> : null}
-                            </td>
-                            <td className="px-2 py-1.5 text-right tabular-nums">{formatCurrency(Number(row.cost_amount))}</td>
-                            <td className="px-2 py-1.5 text-right tabular-nums">{formatCurrency(Number(row.sale_amount))}</td>
-                            <td className="px-1 py-1.5 text-center">
-                              <button type="button" onClick={() => deleteWalletManualRow(row.id)} className="text-red-600 hover:underline">
-                                Hapus
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-                {walletManual && !walletManualLoading ? (
-                  <div className="mt-2 space-y-0.5 border-t border-slate-200 pt-2 text-[11px] text-slate-700">
-                    <div className="flex justify-between">
-                      <span>Total modal (estimasi)</span>
-                      <span className="font-semibold">{formatCurrency(Number(walletManual.total_modal || 0))}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Total jual</span>
-                      <span className="font-semibold">{formatCurrency(Number(walletManual.total_sale || 0))}</span>
-                    </div>
-                    <div className="flex justify-between text-slate-900">
-                      <span>Profit (jual − modal)</span>
-                      <span className="font-bold">{formatCurrency(Number(walletManual.profit || 0))}</span>
-                    </div>
-                  </div>
-                ) : null}
-                <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3">
-                  <p className="text-xs font-semibold text-emerald-900">Saldo masuk (top-up)</p>
-                  <p className="mt-0.5 text-[11px] text-emerald-800/90">Transfer/isi saldo ke aplikasi — tidak mengurangi stok.</p>
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    <input
-                      type="number"
-                      min={1}
-                      step="1"
-                      placeholder="Nominal"
-                      value={wtForm.amount}
-                      onChange={(e) => setWtForm((f) => ({ ...f, amount: e.target.value }))}
-                      className="rounded-lg border border-emerald-200 bg-white px-2 py-1.5 text-sm"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Keterangan (opsional)"
-                      value={wtForm.notes}
-                      onChange={(e) => setWtForm((f) => ({ ...f, notes: e.target.value }))}
-                      className="rounded-lg border border-emerald-200 bg-white px-2 py-1.5 text-sm"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={addWalletTopupRow}
-                    className="mt-2 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-900 hover:bg-emerald-50"
-                  >
-                    Catat saldo masuk
-                  </button>
-                  <div className="mt-2 max-h-32 overflow-y-auto rounded border border-emerald-100 bg-white text-[11px]">
-                    {walletTopupLoading ? (
-                      <p className="p-2 text-center text-slate-500">Memuat…</p>
-                    ) : !(walletTopup?.lines || []).length ? (
-                      <p className="p-2 text-center text-slate-500">Belum ada top-up hari ini</p>
-                    ) : (
-                      <ul className="divide-y divide-emerald-50">
-                        {(walletTopup.lines || []).map((row) => (
-                          <li key={row.id} className="flex items-center justify-between gap-2 px-2 py-1.5">
-                            <span className="min-w-0 truncate text-slate-700">{row.notes || '—'}</span>
-                            <span className="shrink-0 font-medium tabular-nums">{formatCurrency(Number(row.amount))}</span>
-                            <button type="button" onClick={() => deleteWalletTopupRow(row.id)} className="shrink-0 text-red-600 hover:underline">
-                              Hapus
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  {walletTopup && !walletTopupLoading ? (
-                    <div className="mt-2 border-t border-emerald-200 pt-2 text-[11px] font-semibold text-emerald-900">
-                      Total saldo masuk hari ini: {formatCurrency(Number(walletTopup.total_topup || 0))}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            )}
+            ) : null}
             <div>
               <label className="text-xs text-slate-500">Catatan</label>
               <textarea value={cart.notes} onChange={(e) => cart.setMeta({ notes: e.target.value })} rows={2} className="mt-1 w-full rounded-xl border border-slate-200 px-2 py-2 text-sm" />
@@ -570,6 +390,41 @@ export default function PosPage() {
           </div>
           <ul className="max-h-56 space-y-2 overflow-y-auto text-sm">
             {cart.items.map((it) => {
+              if (it.kind === 'wallet_product') {
+                const w = it.wcp;
+                return (
+                  <li key={`wcp-${it.wallet_channel_product_id}`} className="flex flex-col gap-2 rounded-xl bg-sky-50 px-3 py-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-xs font-semibold uppercase text-sky-900">Kanal</div>
+                        <div className="truncate font-medium text-slate-900">{w?.name}</div>
+                      </div>
+                      <button type="button" onClick={() => cart.removeWalletItem(it.wallet_channel_product_id)} className="shrink-0 text-red-600">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="text-[10px] text-slate-600">Harga</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step="1"
+                        value={it.unit_price}
+                        onChange={(e) => cart.setWalletUnitPrice(it.wallet_channel_product_id, e.target.value)}
+                        className="w-24 rounded-lg border border-slate-200 px-2 py-1 text-xs"
+                      />
+                      <span className="text-xs text-slate-500">×</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={it.quantity}
+                        onChange={(e) => cart.setWalletQty(it.wallet_channel_product_id, e.target.value)}
+                        className="w-14 rounded-lg border border-slate-200 px-2 py-1 text-center text-xs"
+                      />
+                    </div>
+                  </li>
+                );
+              }
               const p = it.product;
               const isRes = !!cart.resellerId;
               const price = isRes && it.quantity >= Number(p.min_wholesale_qty) ? Number(p.wholesale_price) : Number(p.retail_price);
