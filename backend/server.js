@@ -1883,7 +1883,7 @@ app.get('/api/wallet-channel-products', authMiddleware, requireRoles('super_admi
   }
 });
 
-app.post('/api/wallet-channel-products', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+app.post('/api/wallet-channel-products', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
   try {
     const channel_id = Number(req.body.channel_id);
     const name = String(req.body.name || '').trim();
@@ -1903,7 +1903,7 @@ app.post('/api/wallet-channel-products', authMiddleware, requireRoles('super_adm
   }
 });
 
-app.put('/api/wallet-channel-products/:id', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+app.put('/api/wallet-channel-products/:id', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const name = String(req.body.name || '').trim();
@@ -1925,7 +1925,7 @@ app.put('/api/wallet-channel-products/:id', authMiddleware, requireRoles('super_
   }
 });
 
-app.delete('/api/wallet-channel-products/:id', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+app.delete('/api/wallet-channel-products/:id', authMiddleware, requireRoles('super_admin', 'admin_cabang', 'kasir'), async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id) || id <= 0) return fail(res, 400, 'ID tidak valid');

@@ -48,7 +48,7 @@ export default function App() {
         <Route path="products" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><ProductsPage /></ProtectedRoute>} />
         <Route path="product-promos" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><ProductPromosPage /></ProtectedRoute>} />
         <Route path="wallet-channels" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><WalletChannelsPage /></ProtectedRoute>} />
-        <Route path="wallet-channel-products" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><WalletChannelProductsPage /></ProtectedRoute>} />
+        <Route path="wallet-channel-products" element={<ProtectedRoute roles={['super_admin', 'admin_cabang', 'kasir']}><WalletChannelProductsPage /></ProtectedRoute>} />
         <Route path="wallet-branch-saldo" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><WalletBranchSaldoPage /></ProtectedRoute>} />
         <Route path="stock-central" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><StockCentralPage /></ProtectedRoute>} />
         <Route path="stock-branch" element={<StockBranchPage />} />

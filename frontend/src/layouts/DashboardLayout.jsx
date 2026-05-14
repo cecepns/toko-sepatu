@@ -45,7 +45,7 @@ const nav = [
   { to: '/products', label: 'Produk', icon: Package, roles: ['super_admin', 'admin_cabang'] },
   { to: '/product-promos', label: 'Promo', icon: Percent, roles: ['super_admin', 'admin_cabang'] },
   { to: '/wallet-channels', label: 'Kanal aplikasi', icon: Radio, roles: ['super_admin', 'admin_cabang'] },
-  { to: '/wallet-channel-products', label: 'Produk kanal', icon: Smartphone, roles: ['super_admin', 'admin_cabang'] },
+  { to: '/wallet-channel-products', label: 'Produk kanal', icon: Smartphone, roles: ['super_admin', 'admin_cabang', 'kasir'] },
   { to: '/wallet-branch-saldo', label: 'Saldo kanal cabang', icon: Banknote, roles: ['super_admin', 'admin_cabang'] },
   { to: '/stock-central', label: 'Stok Pusat', icon: Warehouse, roles: ['super_admin', 'admin_cabang'] },
   { to: '/stock-branch', label: 'Stok Cabang', icon: Store, roles: ['super_admin', 'admin_cabang', 'kasir'] },
