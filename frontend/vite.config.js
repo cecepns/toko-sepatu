@@ -13,9 +13,9 @@ export default defineConfig({
       filename: 'sw.js',
       includeAssets: ['favicon.svg', 'icons/pwa-192.png', 'icons/pwa-512.png'],
       manifest: {
-        name: 'POS Multi Cabang',
-        short_name: 'POS MC',
-        description: 'Point of Sale multi cabang — penjualan, stok, absensi',
+        name: 'Magfirah Cell',
+        short_name: 'Magfirah Cell',
+        description: 'Magfirah Cell — POS penjualan, stok, absensi',
         theme_color: '#FF202E',
         background_color: '#FF202E',
         display: 'standalone',

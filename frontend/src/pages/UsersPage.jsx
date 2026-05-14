@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Plus, Pencil } from 'lucide-react';
+import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
 import { Modal } from '@/components/Modal';
+import { useAuth } from '@/contexts/AuthContext';
 import { useServerTable } from '@/hooks/useServerTable';
 import { userService } from '@/services/userService';
 import { branchService } from '@/services/branchService';
 import { workShiftService } from '@/services/workShiftService';
-import { iconActionEdit } from '@/utils/iconActionButton';
+import { iconActionDelete, iconActionEdit } from '@/utils/iconActionButton';
 
 export default function UsersPage() {
+  const { user: authUser } = useAuth();
   const fetcher = useCallback((p) => userService.list(p), []);
   const t = useServerTable(fetcher);
   const [modal, setModal] = useState({ open: false, row: null });
@@ -95,6 +97,18 @@ export default function UsersPage() {
     }
   };
 
+  const removeUser = async (row) => {
+    if (row.id === authUser?.id) return toast.error('Tidak dapat menghapus akun sendiri');
+    if (!window.confirm(`Hapus pengguna "${row.full_name}" (${row.email})? Tindakan ini tidak bisa dibatalkan.`)) return;
+    try {
+      await userService.remove(row.id);
+      toast.success('Pengguna dihapus');
+      t.reload();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
   const roleSlugForModal = roles.find((x) => String(x.id) === modalRoleId)?.slug;
   const needsShift = (roleSlugForModal === 'kasir' || roleSlugForModal === 'karyawan') && !!modalBranchId;
 
@@ -124,9 +138,20 @@ export default function UsersPage() {
             key: 'actions',
             label: '',
             render: (row) => (
-              <button type="button" title="Ubah" className={iconActionEdit} onClick={() => setModal({ open: true, row })}>
-                <Pencil className="h-4 w-4" />
-              </button>
+              <div className="flex gap-1.5">
+                <button type="button" title="Ubah" className={iconActionEdit} onClick={() => setModal({ open: true, row })}>
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  title="Hapus pengguna"
+                  disabled={row.id === authUser?.id}
+                  className={iconActionDelete}
+                  onClick={() => removeUser(row)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
             ),
           },
         ]}

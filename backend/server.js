@@ -696,6 +696,41 @@ app.put('/api/users/:id', authMiddleware, requireRoles('super_admin', 'admin_cab
   }
 });
 
+app.delete('/api/users/:id', authMiddleware, requireRoles('super_admin', 'admin_cabang'), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return fail(res, 400, 'ID tidak valid');
+    if (id === req.user.id) return fail(res, 400, 'Tidak dapat menghapus akun sendiri');
+
+    const [rows] = await pool.query(
+      `SELECT u.id, u.branch_id, r.slug AS role_slug FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = :id`,
+      { id }
+    );
+    if (!rows[0]) return fail(res, 404, 'Pengguna tidak ditemukan');
+    const target = rows[0];
+
+    if (req.user.role_slug === 'admin_cabang') {
+      if (target.role_slug === 'super_admin') return fail(res, 403, 'Tidak boleh menghapus super admin');
+      if (Number(target.branch_id) !== Number(req.user.branch_id)) {
+        return fail(res, 403, 'Tidak dapat menghapus pengguna cabang lain');
+      }
+    }
+
+    await pool.query(`DELETE FROM users WHERE id = :id`, { id });
+    await logActivity(req.user.id, 'delete', 'user', id, {}, req.ip);
+    return ok(res, null, 'Pengguna dihapus');
+  } catch (e) {
+    if (e.code === 'ER_ROW_IS_REFERENCED_2' || e.errno === 1451) {
+      return fail(
+        res,
+        409,
+        'Pengguna tidak bisa dihapus: masih ada penjualan, permintaan transfer, atau data lain yang merujuk ke akun ini.'
+      );
+    }
+    return fail(res, 500, e.message);
+  }
+});
+
 /* Categories */
 app.get('/api/categories', authMiddleware, async (req, res) => {
   try {
