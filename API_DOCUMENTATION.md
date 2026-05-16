@@ -1,6 +1,6 @@
 # API Documentation — POS Multi Cabang
 
-**Base URL:** `https://api-inventory.isavralabel.com/pos-multicabang`  
+**Base URL:** `https://api.kingcreativestudio.my.id/pos-multicabang`  
 **Auth:** header `Authorization: Bearer <JWT>` (kecuali login & health).
 
 ## Format respons

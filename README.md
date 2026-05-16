@@ -64,7 +64,7 @@ npm install
 npm run dev
 ```
 
-API default: `https://api-inventory.isavralabel.com/pos-multicabang`  
+API default: `https://api.kingcreativestudio.my.id/pos-multicabang`  
 Folder `uploads/` dibuat otomatis jika belum ada.
 
 ## Frontend
