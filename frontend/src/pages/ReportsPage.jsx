@@ -17,7 +17,6 @@ const tabs = [
   { id: 'pl', label: 'Laba rugi (per trx)' },
   { id: 'stock', label: 'Stok' },
   { id: 'bestsellers', label: 'Produk terlaris' },
-  { id: 'attendance', label: 'Absensi' },
 ];
 
 function defaultOmsetRange() {
@@ -39,13 +38,6 @@ function rowsForSheet(tab, period, rows) {
   if (tab === 'omset_daily') {
     return rows.map((r) => ({
       Tanggal: formatReportDay(r.report_date),
-      Penjualan: Number(r.omset_penjualan) || 0,
-      Grosiran: Number(r.omset_grosiran) || 0,
-      Simpel: Number(r.omset_simpel) || 0,
-      Digipos: Number(r.omset_digipos) || 0,
-      Bonafit: Number(r.omset_bonafit) || 0,
-      Sidiva: Number(r.omset_sidiva) || 0,
-      'Kanal lain': Number(r.omset_wallet_lain) || 0,
       'Jumlah transaksi': Number(r.trx_count) || 0,
       'Total omset': Number(r.total_omset) || 0,
       'Laba bersih (est.)': Number(r.net_profit) || 0,
@@ -54,7 +46,6 @@ function rowsForSheet(tab, period, rows) {
   if (tab === 'transaction_lines') {
     return rows.map((r) => ({
       Tanggal: formatExportDateTime(r.created_at),
-      Cabang: r.branch_name,
       Kasir: r.cashier_name,
       Invoice: r.sale_number,
       Produk: r.product_name,
@@ -62,7 +53,6 @@ function rowsForSheet(tab, period, rows) {
       Qty: Number(r.quantity) || 0,
       'Harga satuan': formatCurrency(r.unit_price),
       Subtotal: formatCurrency(r.line_subtotal),
-      Kanal: r.channel_display,
     }));
   }
   if (tab === 'pl') {
@@ -76,32 +66,24 @@ function rowsForSheet(tab, period, rows) {
   }
   if (tab === 'stock') {
     return rows.map((r) => ({
-      Cabang: r.branch_name,
       SKU: r.sku,
       Produk: r.name,
+      Warna: r.color,
+      Ukuran: r.size,
+      Tipe: r.sport_type,
       Qty: r.quantity,
       Min: r.min_stock,
-      'Stok pusat': r.central_qty ?? '',
     }));
   }
   if (tab === 'bestsellers') {
     return rows.map((r) => ({
-      Cabang: r.branch_name ?? r.branch_id,
       SKU: r.sku,
       Produk: r.name,
       Terjual: r.qty_sold,
       Pendapatan: formatCurrency(r.revenue),
     }));
   }
-  return rows.map((r) => ({
-    Karyawan: r.full_name,
-    Kode: r.employee_code,
-    Cabang: r.branch_name,
-    Shift: r.shift_name || '—',
-    Masuk: formatExportDate(r.clock_in_at),
-    Keluar: r.clock_out_at ? formatExportDate(r.clock_out_at) : '-',
-    Status: r.status,
-  }));
+  return [];
 }
 
 function reportColumns(tab, period) {
@@ -124,37 +106,28 @@ function reportColumns(tab, period) {
   }
   if (tab === 'stock') {
     return [
-      { key: 'branch_name', label: 'Cabang', render: (r) => r.branch_name },
       { key: 'sku', label: 'SKU', render: (r) => <span className="font-mono text-xs">{r.sku}</span> },
       { key: 'name', label: 'Produk', render: (r) => r.name },
+      { key: 'color', label: 'Warna', render: (r) => r.color },
+      { key: 'size', label: 'Ukuran', render: (r) => r.size },
       { key: 'quantity', label: 'Qty', render: (r) => <span className="tabular-nums">{r.quantity}</span> },
       { key: 'min_stock', label: 'Min', render: (r) => r.min_stock },
-      { key: 'central_qty', label: 'Stok pusat', render: (r) => (r.central_qty != null ? r.central_qty : '—') },
     ];
   }
   if (tab === 'bestsellers') {
     return [
-      { key: 'branch', label: 'Cabang', render: (r) => r.branch_name ?? `#${r.branch_id}` },
       { key: 'sku', label: 'SKU', render: (r) => <span className="font-mono text-xs">{r.sku}</span> },
       { key: 'name', label: 'Produk', render: (r) => r.name },
       { key: 'qty_sold', label: 'Terjual', render: (r) => <span className="tabular-nums">{r.qty_sold}</span> },
       { key: 'revenue', label: 'Pendapatan', render: (r) => formatCurrency(r.revenue) },
     ];
   }
-  return [
-    { key: 'full_name', label: 'Nama', render: (r) => r.full_name },
-    { key: 'employee_code', label: 'Kode', render: (r) => <span className="font-mono text-xs">{r.employee_code}</span> },
-    { key: 'branch_name', label: 'Cabang', render: (r) => r.branch_name },
-    { key: 'shift_name', label: 'Shift', render: (r) => r.shift_name || '—' },
-    { key: 'clock_in_at', label: 'Masuk', render: (r) => formatExportDate(r.clock_in_at) },
-    { key: 'clock_out_at', label: 'Keluar', render: (r) => (r.clock_out_at ? formatExportDate(r.clock_out_at) : '—') },
-    { key: 'status', label: 'Status', render: (r) => r.status },
-  ];
+  return [];
 }
 
 export default function ReportsPage() {
   const { user } = useAuth();
-  const isSuper = user?.role_slug === 'super_admin';
+  const isAdmin = user?.role_slug === 'admin';
   const [tab, setTab] = useState('sales');
   const [period, setPeriod] = useState('daily');
   const [rows, setRows] = useState([]);
@@ -183,24 +156,16 @@ export default function ReportsPage() {
   const [histTotal, setHistTotal] = useState(0);
   const histLimit = 40;
 
-  useEffect(() => {
-    if (user?.role_slug === 'admin_cabang' && user.branch_id) {
-      const bid = String(user.branch_id);
-      setOmsetBranchId(bid);
-      setHistBranchId(bid);
-    }
-  }, [user?.role_slug, user?.branch_id]);
-
   const load = async () => {
     if (tab === 'omset_daily' || tab === 'transaction_lines') return;
     setLoading(true);
     try {
       let res;
-      if (tab === 'sales') res = await reportService.sales({ period });
-      else if (tab === 'pl') res = await reportService.pl({});
+      if (tab === 'sales') res = await reportService.sales({ period, from: rangeInit.from, to: rangeInit.to });
+      else if (tab === 'pl') res = await reportService.pl({ from: rangeInit.from, to: rangeInit.to });
       else if (tab === 'stock') res = await reportService.stock({ limit: 200, page: 1 });
-      else if (tab === 'bestsellers') res = await reportService.bestsellers({ limit: 50, page: 1 });
-      else res = await reportService.attendance({ limit: 50, page: 1 });
+      else if (tab === 'bestsellers') res = await reportService.bestsellers({ from: rangeInit.from, to: rangeInit.to, limit: 50, page: 1 });
+      else return;
       if (!res.success) throw new Error(res.message);
       const raw = res.data;
       setRows(Array.isArray(raw) ? raw : []);
@@ -216,14 +181,15 @@ export default function ReportsPage() {
     setOmsetLoading(true);
     try {
       const params = { from: omsetFrom, to: omsetTo };
-      if (omsetBranchId) params.branch_id = Number(omsetBranchId);
-      if (omsetCashierId) params.cashier_user_id = Number(omsetCashierId);
       const res = await reportService.dailyOmset(params);
       if (!res.success) throw new Error(res.message);
-      const pack = res.data || {};
-      setOmsetRows(Array.isArray(pack.rows) ? pack.rows : []);
-      setOmsetBranches(Array.isArray(pack.branches) ? pack.branches : []);
-      setOmsetCashiers(Array.isArray(pack.cashiers) ? pack.cashiers : []);
+      const list = res.data || [];
+      setOmsetRows(
+        list.map((r) => ({
+          ...r,
+          total_omset: r.total_omset ?? r.grand_total,
+        }))
+      );
     } catch (e) {
       toast.error(e.message);
       setOmsetRows([]);
@@ -275,32 +241,13 @@ export default function ReportsPage() {
   const columns = useMemo(() => reportColumns(tab, period), [tab, period]);
 
   const omsetTotals = useMemo(() => {
-    const t = {
-      penjualan: 0,
-      grosiran: 0,
-      simpel: 0,
-      digipos: 0,
-      bonafit: 0,
-      sidiva: 0,
-      wallet_lain: 0,
-      trx: 0,
-      total_omset: 0,
-      net_profit: 0,
-    };
+    const t = { trx: 0, total_omset: 0, net_profit: 0 };
     for (const r of omsetRows) {
-      t.penjualan += Number(r.omset_penjualan) || 0;
-      t.grosiran += Number(r.omset_grosiran) || 0;
-      t.simpel += Number(r.omset_simpel) || 0;
-      t.digipos += Number(r.omset_digipos) || 0;
-      t.bonafit += Number(r.omset_bonafit) || 0;
-      t.sidiva += Number(r.omset_sidiva) || 0;
-      t.wallet_lain += Number(r.omset_wallet_lain) || 0;
       t.trx += Number(r.trx_count) || 0;
       t.total_omset += Number(r.total_omset) || 0;
       t.net_profit += Number(r.net_profit) || 0;
     }
-    const n = omsetRows.length || 1;
-    return { ...t, avgPenjualan: t.penjualan / n, avgGrosiran: t.grosiran / n, dayCount: omsetRows.length };
+    return { ...t, dayCount: omsetRows.length };
   }, [omsetRows]);
 
   const exportExcel = () => {
@@ -448,7 +395,7 @@ export default function ReportsPage() {
               className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
             />
           </div>
-          {isSuper && (
+          {false && (
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-600">Cabang</label>
               <select
@@ -515,26 +462,19 @@ export default function ReportsPage() {
 
       {tab === 'omset_daily' ? (
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full min-w-[1020px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[480px] border-collapse text-left text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-600">
-                <th className="whitespace-nowrap px-3 py-3">Hari / tanggal</th>
-                <th className="whitespace-nowrap px-3 py-3">Penjualan</th>
-                <th className="whitespace-nowrap px-3 py-3">Grosiran</th>
-                <th className="whitespace-nowrap px-3 py-3">Simpel</th>
-                <th className="whitespace-nowrap px-3 py-3">Digipos</th>
-                <th className="whitespace-nowrap px-3 py-3">Bonafit</th>
-                <th className="whitespace-nowrap px-3 py-3">Sidiva</th>
-                <th className="whitespace-nowrap px-3 py-3">Kanal lain</th>
+                <th className="whitespace-nowrap px-3 py-3">Tanggal</th>
                 <th className="whitespace-nowrap px-3 py-3">Jumlah trx</th>
                 <th className="whitespace-nowrap px-3 py-3">Total omset</th>
-                <th className="whitespace-nowrap px-3 py-3">Laba bersih</th>
+                <th className="whitespace-nowrap px-3 py-3">Laba bersih (est.)</th>
               </tr>
             </thead>
             <tbody>
               {omsetLoading && (
                 <tr>
-                  <td colSpan={11} className="px-3 py-8 text-center text-slate-500">
+                  <td colSpan={4} className="px-3 py-8 text-center text-slate-500">
                     Memuat…
                   </td>
                 </tr>
@@ -543,13 +483,6 @@ export default function ReportsPage() {
                 omsetRows.map((r) => (
                   <tr key={String(r.report_date)} className="border-b border-slate-100 hover:bg-slate-50/80">
                     <td className="whitespace-nowrap px-3 py-2.5 font-medium text-slate-900">{formatReportDay(r.report_date)}</td>
-                    <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.omset_penjualan)}</td>
-                    <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.omset_grosiran)}</td>
-                    <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.omset_simpel)}</td>
-                    <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.omset_digipos)}</td>
-                    <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.omset_bonafit)}</td>
-                    <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.omset_sidiva)}</td>
-                    <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.omset_wallet_lain)}</td>
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-700">{r.trx_count ?? 0}</td>
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums font-medium text-slate-900">{formatCurrency(r.total_omset)}</td>
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-emerald-800">{formatCurrency(r.net_profit)}</td>
@@ -557,7 +490,7 @@ export default function ReportsPage() {
                 ))}
               {!omsetLoading && !omsetRows.length && (
                 <tr>
-                  <td colSpan={11} className="px-3 py-8 text-center text-slate-500">
+                  <td colSpan={4} className="px-3 py-8 text-center text-slate-500">
                     Tidak ada data di rentang ini
                   </td>
                 </tr>
@@ -567,24 +500,9 @@ export default function ReportsPage() {
               <tfoot>
                 <tr className="border-t-2 border-slate-200 bg-slate-100 font-semibold text-slate-900">
                   <td className="px-3 py-2.5">Total</td>
-                  <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.penjualan)}</td>
-                  <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.grosiran)}</td>
-                  <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.simpel)}</td>
-                  <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.digipos)}</td>
-                  <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.bonafit)}</td>
-                  <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.sidiva)}</td>
-                  <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.wallet_lain)}</td>
                   <td className="px-3 py-2.5 tabular-nums">{omsetTotals.trx}</td>
                   <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.total_omset)}</td>
                   <td className="px-3 py-2.5 tabular-nums text-emerald-900">{formatCurrency(omsetTotals.net_profit)}</td>
-                </tr>
-                <tr className="bg-slate-50 text-xs text-slate-600">
-                  <td className="px-3 py-2">Rata-rata / hari</td>
-                  <td className="px-3 py-2 tabular-nums">{formatCurrency(omsetTotals.avgPenjualan)}</td>
-                  <td className="px-3 py-2 tabular-nums">{formatCurrency(omsetTotals.avgGrosiran)}</td>
-                  <td colSpan={8} className="px-3 py-2 text-slate-500">
-                    ({omsetTotals.dayCount} hari bertransaksi)
-                  </td>
                 </tr>
               </tfoot>
             )}
@@ -617,7 +535,7 @@ export default function ReportsPage() {
                 className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
               />
             </div>
-            {isSuper && (
+            {false && (
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600">Cabang</label>
                 <select

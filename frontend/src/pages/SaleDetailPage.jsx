@@ -64,10 +64,7 @@ export default function SaleDetailPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">{row.sale_number}</h1>
-          <p className="text-sm text-slate-600">{formatDate(row.created_at)} · {row.branch_name}</p>
-        {row.payments?.[0]?.wallet_channel ? (
-          <p className="mt-1 text-xs font-medium text-brand-800">Kanal aplikasi: {row.payments[0].wallet_channel}</p>
-        ) : null}
+          <p className="text-sm text-slate-600">{formatDate(row.created_at)} · {row.cashier_name}</p>
         </div>
         <button type="button" onClick={print} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white">
           <Printer className="h-4 w-4" /> Print struk thermal
@@ -75,8 +72,7 @@ export default function SaleDetailPage() {
       </div>
 
       <div ref={printRef} className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-center text-lg font-bold">POS MULTI CABANG</h2>
-        <p className="text-center text-xs text-slate-500">{row.branch_name}</p>
+        <h2 className="text-center text-lg font-bold">BELIEVE SPORT</h2>
         <hr className="my-3 border-dashed" />
         <p className="text-xs">No: {row.sale_number}</p>
         <p className="text-xs">Kasir: {row.cashier_name}</p>
@@ -85,9 +81,9 @@ export default function SaleDetailPage() {
             {(row.items || []).map((i) => (
               <tr key={i.id}>
                 <td>
-                  {i.product_name}
+                  {i.model_name ? `${i.model_name} — ${i.color} ${i.size}` : i.product_name}
                   <div className="text-slate-500">
-                    {i.quantity} × {formatCurrency(i.unit_price)} {i.is_wholesale_line ? '(Grosir)' : ''}
+                    {i.quantity} × {formatCurrency(i.unit_price)}
                   </div>
                 </td>
                 <td className="align-top text-right">{formatCurrency(i.line_subtotal)}</td>

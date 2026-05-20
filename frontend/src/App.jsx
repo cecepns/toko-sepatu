@@ -3,26 +3,15 @@ import { DashboardLayout } from '@/layouts/DashboardLayout';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import LoginPage from '@/pages/LoginPage';
 import DashboardPage from '@/pages/DashboardPage';
-import BranchesPage from '@/pages/BranchesPage';
 import UsersPage from '@/pages/UsersPage';
 import CategoriesPage from '@/pages/CategoriesPage';
-import UnitsPage from '@/pages/UnitsPage';
 import ProductsPage from '@/pages/ProductsPage';
 import ProductPromosPage from '@/pages/ProductPromosPage';
-import StockCentralPage from '@/pages/StockCentralPage';
-import StockBranchPage from '@/pages/StockBranchPage';
-import TransfersPage from '@/pages/TransfersPage';
+import StockPage from '@/pages/StockPage';
 import PosPage from '@/pages/PosPage';
 import SalesPage from '@/pages/SalesPage';
 import SaleDetailPage from '@/pages/SaleDetailPage';
-import ResellersPage from '@/pages/ResellersPage';
-import AttendancePage from '@/pages/AttendancePage';
-import WorkShiftsPage from '@/pages/WorkShiftsPage';
 import ReportsPage from '@/pages/ReportsPage';
-import WalletChannelsPage from '@/pages/WalletChannelsPage';
-import WalletChannelProductsPage from '@/pages/WalletChannelProductsPage';
-import WalletSalesPage from '@/pages/WalletSalesPage';
-import WalletBranchSaldoPage from '@/pages/WalletBranchSaldoPage';
 
 export default function App() {
   return (
@@ -37,26 +26,15 @@ export default function App() {
         }
       >
         <Route index element={<DashboardPage />} />
-        <Route path="pos" element={<PosPage />} />
-        <Route path="sales" element={<SalesPage />} />
-        <Route path="sales/wallet" element={<WalletSalesPage />} />
-        <Route path="sales/:id" element={<SaleDetailPage />} />
-        <Route path="branches" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><BranchesPage /></ProtectedRoute>} />
-        <Route path="users" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><UsersPage /></ProtectedRoute>} />
-        <Route path="categories" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><CategoriesPage /></ProtectedRoute>} />
-        <Route path="units" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><UnitsPage /></ProtectedRoute>} />
-        <Route path="products" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><ProductsPage /></ProtectedRoute>} />
-        <Route path="product-promos" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><ProductPromosPage /></ProtectedRoute>} />
-        <Route path="wallet-channels" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><WalletChannelsPage /></ProtectedRoute>} />
-        <Route path="wallet-channel-products" element={<ProtectedRoute roles={['super_admin', 'admin_cabang', 'kasir']}><WalletChannelProductsPage /></ProtectedRoute>} />
-        <Route path="wallet-branch-saldo" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><WalletBranchSaldoPage /></ProtectedRoute>} />
-        <Route path="stock-central" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><StockCentralPage /></ProtectedRoute>} />
-        <Route path="stock-branch" element={<StockBranchPage />} />
-        <Route path="transfers" element={<ProtectedRoute roles={['super_admin', 'admin_cabang', 'kasir']}><TransfersPage /></ProtectedRoute>} />
-        <Route path="resellers" element={<ProtectedRoute roles={['super_admin', 'admin_cabang', 'kasir']}><ResellersPage /></ProtectedRoute>} />
-        <Route path="attendance" element={<ProtectedRoute roles={['super_admin', 'admin_cabang', 'karyawan', 'kasir']}><AttendancePage /></ProtectedRoute>} />
-        <Route path="work-shifts" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><WorkShiftsPage /></ProtectedRoute>} />
-        <Route path="reports" element={<ProtectedRoute roles={['super_admin', 'admin_cabang']}><ReportsPage /></ProtectedRoute>} />
+        <Route path="pos" element={<ProtectedRoute roles={['admin', 'kasir']}><PosPage /></ProtectedRoute>} />
+        <Route path="sales" element={<ProtectedRoute roles={['admin', 'kasir']}><SalesPage /></ProtectedRoute>} />
+        <Route path="sales/:id" element={<ProtectedRoute roles={['admin', 'kasir']}><SaleDetailPage /></ProtectedRoute>} />
+        <Route path="users" element={<ProtectedRoute roles={['admin']}><UsersPage /></ProtectedRoute>} />
+        <Route path="categories" element={<ProtectedRoute roles={['admin']}><CategoriesPage /></ProtectedRoute>} />
+        <Route path="products" element={<ProtectedRoute roles={['admin']}><ProductsPage /></ProtectedRoute>} />
+        <Route path="product-promos" element={<ProtectedRoute roles={['admin']}><ProductPromosPage /></ProtectedRoute>} />
+        <Route path="stock" element={<ProtectedRoute roles={['admin']}><StockPage /></ProtectedRoute>} />
+        <Route path="reports" element={<ProtectedRoute roles={['admin']}><ReportsPage /></ProtectedRoute>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

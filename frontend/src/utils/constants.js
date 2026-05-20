@@ -1,13 +1,27 @@
 export const ROLES = {
-  SUPER_ADMIN: 'super_admin',
-  ADMIN_CABANG: 'admin_cabang',
+  ADMIN: 'admin',
   KASIR: 'kasir',
-  KARYAWAN: 'karyawan',
 };
 
 export const ROLE_LABELS = {
-  super_admin: 'Super Admin',
-  admin_cabang: 'Admin Cabang',
+  admin: 'Admin',
   kasir: 'Kasir',
-  karyawan: 'Karyawan',
 };
+
+export const SPORT_TYPES = [
+  { value: 'futsal', label: 'Futsal' },
+  { value: 'sepak_bola', label: 'Sepak Bola' },
+  { value: 'umum', label: 'Umum' },
+];
+
+export function sportTypeLabel(value) {
+  return SPORT_TYPES.find((s) => s.value === value)?.label || value || '—';
+}
+
+export function variantDisplayName(row) {
+  const model = row.model_name || row.name || 'Produk';
+  const color = row.color ? ` · ${row.color}` : '';
+  const size = row.size ? ` · ${row.size}` : '';
+  const sport = row.sport_type ? ` (${sportTypeLabel(row.sport_type)})` : '';
+  return `${model}${color}${size}${sport}`;
+}

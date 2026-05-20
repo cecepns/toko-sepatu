@@ -4,7 +4,7 @@ export default {
   theme: {
     extend: {
       colors: {
-        /** MAGFIRAH CELL — merah logo (~#FF202E / accent #E61E2A) */
+        /** Believe Sport — merah logo (~#FF202E / accent #E61E2A) */
         brand: {
           50: '#fff5f6',
           100: '#ffe4e8',

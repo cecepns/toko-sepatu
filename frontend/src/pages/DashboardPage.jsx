@@ -28,12 +28,6 @@ export default function DashboardPage() {
     try {
       if (!firstLoad.current) setOmsetRefreshing(true);
       const params = {};
-      if (user?.role_slug === 'super_admin') {
-        if (omsetBranchId) params.today_branch_id = Number(omsetBranchId);
-        if (omsetCashierId) params.today_cashier_id = Number(omsetCashierId);
-      } else if (user?.role_slug === 'admin_cabang') {
-        if (omsetCashierId) params.today_cashier_id = Number(omsetCashierId);
-      }
       const res = await dashboardService.summary(params);
       if (res.success) setData(res.data);
       else toast.error(res.message);
@@ -74,11 +68,11 @@ export default function DashboardPage() {
     total: Number(r.total) || 0,
   }));
 
-  const subtitle = staffToday ? 'Transaksi & omset hari ini sesuai akun Anda (bukan seluruh cabang)' : 'Ringkasan performa & stok';
+  const subtitle = staffToday ? 'Transaksi & omset hari ini (akun Anda)' : 'Ringkasan penjualan & stok toko';
   const trxLabel = staffToday ? 'Transaksi hari ini (akun Anda)' : 'Transaksi (30 hari)';
   const revLabel = staffToday ? 'Pendapatan hari ini (akun Anda)' : 'Pendapatan (30 hari)';
   const topProdLabel = staffToday ? 'Produk terlaris (akun Anda, hari ini)' : 'Produk terlaris';
-  const branchLabel = staffToday ? 'Omset cabang Anda (akun ini)' : 'Cabang terbaik';
+  const todayLabel = 'Omset hari ini';
   const chartTitle = staffToday ? 'Penjualan akun Anda (hari ini, per jam)' : 'Grafik penjualan (14 hari)';
 
   return (
@@ -116,21 +110,17 @@ export default function DashboardPage() {
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-slate-500">{branchLabel}</p>
+            <p className="text-sm font-medium text-slate-500">{todayLabel}</p>
             <Building2 className="h-5 w-5 text-indigo-500" />
           </div>
-          <ul className="mt-3 space-y-1 text-sm text-slate-700">
-            {(data?.top_branches || []).slice(0, 3).map((b) => (
-              <li key={b.name} className="flex justify-between gap-2">
-                <span className="truncate">{b.name}</span>
-                <span className="shrink-0 text-slate-500">{formatCurrency(b.revenue)}</span>
-              </li>
-            ))}
-          </ul>
+          <p className="mt-3 text-2xl font-bold text-slate-900">{formatCurrency(tom?.total_omset)}</p>
+          <p className="mt-1 text-xs text-slate-500">
+            {tom?.trx_count ?? 0} transaksi · Laba est. {formatCurrency(tom?.net_profit)}
+          </p>
         </div>
       </div>
 
-      {tom && (
+      {false && tom && (
         <div className="relative mt-6 rounded-2xl border border-brand-200 bg-gradient-to-br from-brand-50 to-white p-5 shadow-sm">
           {omsetRefreshing ? (
             <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-white/60 text-sm font-medium text-slate-600">
@@ -236,10 +226,10 @@ export default function DashboardPage() {
           <h3 className="mb-3 text-sm font-semibold text-amber-900">Stok hampir habis</h3>
           <ul className="max-h-72 space-y-2 overflow-y-auto text-sm">
             {(data?.low_stock || []).map((r) => (
-              <li key={`${r.branch_name}-${r.name}`} className="rounded-xl bg-white/80 px-3 py-2 text-slate-800 shadow-sm">
+              <li key={`${r.sku}-${r.name}`} className="rounded-xl bg-white/80 px-3 py-2 text-slate-800 shadow-sm">
                 <div className="font-medium">{r.name}</div>
                 <div className="text-xs text-slate-500">
-                  {r.branch_name} — stok {r.quantity} (min {r.min_stock})
+                  {r.sku} — stok {r.quantity} (min {r.min_stock})
                 </div>
               </li>
             ))}

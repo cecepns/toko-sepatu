@@ -13,9 +13,9 @@ export default defineConfig({
       filename: 'sw.js',
       includeAssets: ['favicon.svg', 'icons/pwa-192.png', 'icons/pwa-512.png'],
       manifest: {
-        name: 'Magfirah Cell',
-        short_name: 'Magfirah Cell',
-        description: 'Magfirah Cell — POS penjualan, stok, absensi',
+        name: 'Believe Sport',
+        short_name: 'Believe Sport',
+        description: 'Believe Sport — POS penjualan & stok sepatu',
         theme_color: '#FF202E',
         background_color: '#FF202E',
         display: 'standalone',

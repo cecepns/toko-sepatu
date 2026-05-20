@@ -17,7 +17,7 @@ export function ProtectedRoute({ children, roles }) {
     return <Navigate to="/login" state={{ from: loc }} replace />;
   }
 
-  if (roles?.length && !roles.includes(user.role_slug) && user.role_slug !== 'super_admin') {
+  if (roles?.length && !roles.includes(user.role_slug) && user.role_slug !== 'admin') {
     return <Navigate to="/" replace />;
   }
 

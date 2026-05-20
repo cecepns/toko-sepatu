@@ -3,7 +3,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { LogIn } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import logoImg from '@/assets/logo.png';
+import logoImg from '@/assets/logo.jpeg';
 
 export default function LoginPage() {
   const { user, login } = useAuth();
@@ -35,7 +35,7 @@ export default function LoginPage() {
       <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/95 p-8 shadow-2xl backdrop-blur">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-5 flex justify-center px-5 py-4 ring-1 ring-white/10">
-            <img src={logoImg} alt="MAGFIRAH CELL" className="h-12 w-auto max-w-[min(100%,280px)] object-contain sm:h-14" />
+            <img src={logoImg} alt="Believe Sport" className="h-16 w-auto max-w-[min(100%,280px)] object-contain sm:h-20" />
           </div>
           {/* <h1 className="text-xl font-bold text-slate-900">POS Multi Cabang</h1> */}
           <p className="mt-1 text-sm text-slate-600">Masuk dengan akun Anda</p>
