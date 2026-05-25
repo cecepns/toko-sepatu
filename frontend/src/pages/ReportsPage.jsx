@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
 import { reportService } from '@/services/reportService';
 import { formatCurrency, formatExportDate, formatExportDateTime, formatReportDay, formatReportPeriod } from '@/utils/format';
-import { useAuth } from '@/contexts/AuthContext';
+import { paymentMethodLabel } from '@/utils/constants';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -39,6 +39,10 @@ function rowsForSheet(tab, period, rows) {
     return rows.map((r) => ({
       Tanggal: formatReportDay(r.report_date),
       'Jumlah transaksi': Number(r.trx_count) || 0,
+      'Omset tunai': Number(r.omset_cash) || 0,
+      'Omset non tunai': Number(r.omset_non_cash) || 0,
+      'Trx tunai': Number(r.trx_cash) || 0,
+      'Trx non tunai': Number(r.trx_non_cash) || 0,
       'Total omset': Number(r.total_omset) || 0,
       'Laba bersih (est.)': Number(r.net_profit) || 0,
     }));
@@ -47,6 +51,7 @@ function rowsForSheet(tab, period, rows) {
     return rows.map((r) => ({
       Tanggal: formatExportDateTime(r.created_at),
       Kasir: r.cashier_name,
+      Pembayaran: paymentMethodLabel(r.payment_method),
       Invoice: r.sale_number,
       Produk: r.product_name,
       SKU: r.sku || '—',
@@ -206,10 +211,7 @@ export default function ReportsPage() {
       if (histCashierId) params.cashier_user_id = Number(histCashierId);
       const res = await reportService.transactionLines(params);
       if (!res.success) throw new Error(res.message);
-      const pack = res.data || {};
-      setHistRows(Array.isArray(pack.rows) ? pack.rows : []);
-      setHistBranches(Array.isArray(pack.branches) ? pack.branches : []);
-      setHistCashiers(Array.isArray(pack.cashiers) ? pack.cashiers : []);
+      setHistRows(Array.isArray(res.data) ? res.data : []);
       const pg = res.pagination || {};
       setHistTotal(Number(pg.total) || 0);
       setHistTotalPages(Number(pg.totalPages) || 1);
@@ -241,10 +243,14 @@ export default function ReportsPage() {
   const columns = useMemo(() => reportColumns(tab, period), [tab, period]);
 
   const omsetTotals = useMemo(() => {
-    const t = { trx: 0, total_omset: 0, net_profit: 0 };
+    const t = { trx: 0, total_omset: 0, omset_cash: 0, omset_non_cash: 0, trx_cash: 0, trx_non_cash: 0, net_profit: 0 };
     for (const r of omsetRows) {
       t.trx += Number(r.trx_count) || 0;
       t.total_omset += Number(r.total_omset) || 0;
+      t.omset_cash += Number(r.omset_cash) || 0;
+      t.omset_non_cash += Number(r.omset_non_cash) || 0;
+      t.trx_cash += Number(r.trx_cash) || 0;
+      t.trx_non_cash += Number(r.trx_non_cash) || 0;
       t.net_profit += Number(r.net_profit) || 0;
     }
     return { ...t, dayCount: omsetRows.length };
@@ -277,33 +283,29 @@ export default function ReportsPage() {
         formatCurrency(r.gross_profit_estimate),
       ]);
     } else if (tab === 'omset_daily') {
-      head = [['Tanggal', 'Penjualan', 'Grosiran', 'Simpel', 'Digipos', 'Bonafit', 'Sidiva', 'Kanal lain', 'Trx', 'Total omset', 'Laba bersih']];
+      head = [['Tanggal', 'Trx', 'Omset tunai', 'Omset non tunai', 'Trx tunai', 'Trx non tunai', 'Total omset', 'Laba bersih']];
       body = omsetRows.map((r) => [
         formatReportDay(r.report_date),
-        formatCurrency(r.omset_penjualan),
-        formatCurrency(r.omset_grosiran),
-        formatCurrency(r.omset_simpel),
-        formatCurrency(r.omset_digipos),
-        formatCurrency(r.omset_bonafit),
-        formatCurrency(r.omset_sidiva),
-        formatCurrency(r.omset_wallet_lain),
         String(r.trx_count ?? ''),
+        formatCurrency(r.omset_cash),
+        formatCurrency(r.omset_non_cash),
+        String(r.trx_cash ?? ''),
+        String(r.trx_non_cash ?? ''),
         formatCurrency(r.total_omset),
         formatCurrency(r.net_profit),
       ]);
     } else if (tab === 'transaction_lines') {
-      head = [['Tanggal', 'Cabang', 'Kasir', 'Invoice', 'Produk', 'SKU', 'Qty', 'Harga sat.', 'Subtotal', 'Kanal']];
+      head = [['Tanggal', 'Kasir', 'Bayar', 'Invoice', 'Produk', 'SKU', 'Qty', 'Harga sat.', 'Subtotal']];
       body = histRows.map((r) => [
         formatExportDateTime(r.created_at),
-        r.branch_name,
         r.cashier_name,
+        paymentMethodLabel(r.payment_method),
         r.sale_number,
         r.product_name,
         r.sku || '—',
         String(r.quantity ?? ''),
         formatCurrency(r.unit_price),
         formatCurrency(r.line_subtotal),
-        r.channel_display,
       ]);
     } else if (tab === 'pl') {
       head = [['No Invoice', 'Tanggal', 'Subtotal', 'COGS', 'Grand']];
@@ -315,11 +317,11 @@ export default function ReportsPage() {
         formatCurrency(r.grand_total),
       ]);
     } else if (tab === 'stock') {
-      head = [['Cabang', 'SKU', 'Produk', 'Qty', 'Min', 'Pusat']];
-      body = rows.slice(0, 40).map((r) => [r.branch_name, r.sku, r.name, r.quantity, r.min_stock, r.central_qty ?? '—']);
+      head = [['SKU', 'Produk', 'Warna', 'Ukuran', 'Qty', 'Min']];
+      body = rows.slice(0, 40).map((r) => [r.sku, r.name, r.color, r.size, r.quantity, r.min_stock]);
     } else if (tab === 'bestsellers') {
-      head = [['Cabang', 'SKU', 'Produk', 'Qty', 'Pendapatan']];
-      body = rows.slice(0, 40).map((r) => [r.branch_name ?? String(r.branch_id), r.sku, r.name, r.qty_sold, formatCurrency(r.revenue)]);
+      head = [['SKU', 'Produk', 'Qty', 'Pendapatan']];
+      body = rows.slice(0, 40).map((r) => [r.sku, r.name, r.qty_sold, formatCurrency(r.revenue)]);
     } else {
       head = [['Nama', 'Kode', 'Cabang', 'Shift', 'Masuk', 'Keluar', 'Status']];
       body = rows.slice(0, 40).map((r) => [
@@ -341,9 +343,9 @@ export default function ReportsPage() {
 
   const subtitle =
     tab === 'omset_daily'
-      ? 'Kolom penjualan–Sidiva adalah omset per kanal; Kanal lain = pembayaran kanal lain; laba bersih = estimasi (total − COGS). Filter cabang, kasir, dan rentang tanggal.'
+      ? 'Omset harian dipisah tunai vs non tunai. Laba bersih = estimasi (omset − COGS).'
       : tab === 'transaction_lines'
-        ? 'Setiap baris adalah item penjualan: nama produk (stok atau produk kanal) dan kanal pembayaran / konteks (Ecer, Grosir). Filter rentang tanggal, cabang, serta kasir atau karyawan.'
+        ? 'Setiap baris = satu item penjualan beserta metode pembayaran transaksi.'
         : 'Tabel ringkas — export PDF & Excel';
 
   return (
@@ -462,11 +464,15 @@ export default function ReportsPage() {
 
       {tab === 'omset_daily' ? (
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full min-w-[480px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[720px] border-collapse text-left text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-600">
                 <th className="whitespace-nowrap px-3 py-3">Tanggal</th>
-                <th className="whitespace-nowrap px-3 py-3">Jumlah trx</th>
+                <th className="whitespace-nowrap px-3 py-3">Trx</th>
+                <th className="whitespace-nowrap px-3 py-3">Omset tunai</th>
+                <th className="whitespace-nowrap px-3 py-3">Omset non tunai</th>
+                <th className="whitespace-nowrap px-3 py-3">Trx tunai</th>
+                <th className="whitespace-nowrap px-3 py-3">Trx non tunai</th>
                 <th className="whitespace-nowrap px-3 py-3">Total omset</th>
                 <th className="whitespace-nowrap px-3 py-3">Laba bersih (est.)</th>
               </tr>
@@ -474,7 +480,7 @@ export default function ReportsPage() {
             <tbody>
               {omsetLoading && (
                 <tr>
-                  <td colSpan={4} className="px-3 py-8 text-center text-slate-500">
+                  <td colSpan={8} className="px-3 py-8 text-center text-slate-500">
                     Memuat…
                   </td>
                 </tr>
@@ -484,13 +490,17 @@ export default function ReportsPage() {
                   <tr key={String(r.report_date)} className="border-b border-slate-100 hover:bg-slate-50/80">
                     <td className="whitespace-nowrap px-3 py-2.5 font-medium text-slate-900">{formatReportDay(r.report_date)}</td>
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-700">{r.trx_count ?? 0}</td>
+                    <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-emerald-800">{formatCurrency(r.omset_cash)}</td>
+                    <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-sky-800">{formatCurrency(r.omset_non_cash)}</td>
+                    <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-600">{r.trx_cash ?? 0}</td>
+                    <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-600">{r.trx_non_cash ?? 0}</td>
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums font-medium text-slate-900">{formatCurrency(r.total_omset)}</td>
                     <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-emerald-800">{formatCurrency(r.net_profit)}</td>
                   </tr>
                 ))}
               {!omsetLoading && !omsetRows.length && (
                 <tr>
-                  <td colSpan={4} className="px-3 py-8 text-center text-slate-500">
+                  <td colSpan={8} className="px-3 py-8 text-center text-slate-500">
                     Tidak ada data di rentang ini
                   </td>
                 </tr>
@@ -501,6 +511,10 @@ export default function ReportsPage() {
                 <tr className="border-t-2 border-slate-200 bg-slate-100 font-semibold text-slate-900">
                   <td className="px-3 py-2.5">Total</td>
                   <td className="px-3 py-2.5 tabular-nums">{omsetTotals.trx}</td>
+                  <td className="px-3 py-2.5 tabular-nums text-emerald-900">{formatCurrency(omsetTotals.omset_cash)}</td>
+                  <td className="px-3 py-2.5 tabular-nums text-sky-900">{formatCurrency(omsetTotals.omset_non_cash)}</td>
+                  <td className="px-3 py-2.5 tabular-nums">{omsetTotals.trx_cash}</td>
+                  <td className="px-3 py-2.5 tabular-nums">{omsetTotals.trx_non_cash}</td>
                   <td className="px-3 py-2.5 tabular-nums">{formatCurrency(omsetTotals.total_omset)}</td>
                   <td className="px-3 py-2.5 tabular-nums text-emerald-900">{formatCurrency(omsetTotals.net_profit)}</td>
                 </tr>
@@ -576,47 +590,47 @@ export default function ReportsPage() {
             </div>
           </div>
           <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <table className="w-full min-w-[960px] border-collapse text-left text-sm">
+            <table className="w-full min-w-[880px] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-600">
                   <th className="whitespace-nowrap px-3 py-3">Tanggal & jam</th>
-                  <th className="whitespace-nowrap px-3 py-3">Cabang</th>
                   <th className="whitespace-nowrap px-3 py-3">Kasir</th>
+                  <th className="whitespace-nowrap px-3 py-3">Bayar</th>
                   <th className="whitespace-nowrap px-3 py-3">Invoice</th>
                   <th className="min-w-[8rem] px-3 py-3">Produk</th>
                   <th className="whitespace-nowrap px-3 py-3">SKU</th>
                   <th className="whitespace-nowrap px-3 py-3">Qty</th>
                   <th className="whitespace-nowrap px-3 py-3">Harga sat.</th>
                   <th className="whitespace-nowrap px-3 py-3">Subtotal</th>
-                  <th className="whitespace-nowrap px-3 py-3">Kanal</th>
                 </tr>
               </thead>
               <tbody>
                 {histLoading && (
                   <tr>
-                    <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
+                    <td colSpan={9} className="px-3 py-8 text-center text-slate-500">
                       Memuat…
                     </td>
                   </tr>
                 )}
                 {!histLoading &&
-                  histRows.map((r) => (
-                    <tr key={r.line_id} className="border-b border-slate-100 hover:bg-slate-50/80">
+                  histRows.map((r, idx) => (
+                    <tr key={`${r.sale_number}-${r.sku}-${idx}`} className="border-b border-slate-100 hover:bg-slate-50/80">
                       <td className="whitespace-nowrap px-3 py-2.5 text-slate-800">{formatExportDateTime(r.created_at)}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5 text-slate-800">{r.branch_name}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 text-slate-800">{r.cashier_name}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-xs font-medium text-slate-700">
+                        {paymentMethodLabel(r.payment_method)}
+                      </td>
                       <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-slate-900">{r.sale_number}</td>
                       <td className="px-3 py-2.5 font-medium text-slate-900">{r.product_name}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 font-mono text-xs text-slate-600">{r.sku || '—'}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{r.quantity}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 tabular-nums text-slate-800">{formatCurrency(r.unit_price)}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 tabular-nums font-medium text-slate-900">{formatCurrency(r.line_subtotal)}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5 text-xs text-slate-700">{r.channel_display}</td>
                     </tr>
                   ))}
                 {!histLoading && !histRows.length && (
                   <tr>
-                    <td colSpan={10} className="px-3 py-8 text-center text-slate-500">
+                    <td colSpan={9} className="px-3 py-8 text-center text-slate-500">
                       Tidak ada baris di rentang dan filter ini
                     </td>
                   </tr>

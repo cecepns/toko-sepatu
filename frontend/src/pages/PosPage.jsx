@@ -6,7 +6,7 @@ import { usePosCart } from '@/store/posCart';
 import { variantService } from '@/services/productModelService';
 import { saleService } from '@/services/saleService';
 import { formatCurrency } from '@/utils/format';
-import { sportTypeLabel, variantDisplayName } from '@/utils/constants';
+import { PAYMENT_METHODS, sportTypeLabel, variantDisplayName } from '@/utils/constants';
 
 export default function PosPage() {
   const cart = usePosCart();
@@ -70,7 +70,7 @@ export default function PosPage() {
         discount_amount: Number(cart.discount) || 0,
         tax_percent: Number(cart.taxPercent) || 0,
         notes: cart.notes || '',
-        payment_method: 'cash',
+        payment_method: cart.paymentMethod || 'cash',
       });
       if (!res.success) throw new Error(res.message);
       toast.success(`Transaksi ${res.data.sale_number}`);
@@ -145,6 +145,27 @@ export default function PosPage() {
           <div className="mb-3 flex items-center gap-2 text-slate-800">
             <ShoppingBag className="h-5 w-5" />
             <span className="font-semibold">Keranjang</span>
+          </div>
+          <div className="mb-3 space-y-2 text-sm">
+            <div>
+              <label className="text-xs font-medium text-slate-600">Metode pembayaran</label>
+              <div className="mt-1.5 grid grid-cols-2 gap-2">
+                {PAYMENT_METHODS.map((m) => (
+                  <button
+                    key={m.value}
+                    type="button"
+                    onClick={() => cart.setMeta({ paymentMethod: m.value })}
+                    className={`rounded-xl border px-3 py-2.5 text-xs font-semibold transition ${
+                      cart.paymentMethod === m.value
+                        ? 'border-brand-600 bg-brand-600 text-white'
+                        : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
           <div className="mb-3 grid grid-cols-2 gap-2 text-sm">
             <div>

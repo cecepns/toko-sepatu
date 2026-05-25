@@ -5,6 +5,7 @@ export const usePosCart = create((set, get) => ({
   discount: 0,
   taxPercent: 0,
   notes: '',
+  paymentMethod: 'cash',
   items: [],
   setMeta: (p) => set(p),
   addItem: (variant, qty = 1) => {
@@ -21,5 +22,6 @@ export const usePosCart = create((set, get) => ({
     });
   },
   removeItem: (variantId) => set({ items: get().items.filter((x) => x.variant_id !== variantId) }),
-  clear: () => set({ items: [], customerId: null, discount: 0, taxPercent: 0, notes: '' }),
+  clear: () =>
+    set({ items: [], customerId: null, discount: 0, taxPercent: 0, notes: '', paymentMethod: 'cash' }),
 }));

@@ -186,6 +186,18 @@ function saleNumber() {
   return `INV-${ymd}-${rnd}`;
 }
 
+function normalizePaymentMethod(raw) {
+  const m = String(raw || 'cash').toLowerCase().trim();
+  if (m === 'cash' || m === 'tunai') return 'cash';
+  return 'non_cash';
+}
+
+function sqlSalePaymentJoin() {
+  return `LEFT JOIN payments pay ON pay.sale_id = s.id AND pay.id = (
+    SELECT MIN(p2.id) FROM payments p2 WHERE p2.sale_id = s.id
+  )`;
+}
+
 async function nextSku(conn) {
   const [rows] = await conn.query(`SELECT sku FROM product_variants ORDER BY id DESC LIMIT 1`);
   const last = rows[0]?.sku;
@@ -916,6 +928,7 @@ app.post('/api/sales', authMiddleware, requireRoles('admin', 'kasir'), async (re
     const taxAmt = (afterDisc * taxP) / 100;
     const grand = afterDisc + taxAmt;
     const sn = saleNumber();
+    const payMethod = normalizePaymentMethod(payment_method);
 
     const [ins] = await conn.query(
       `INSERT INTO sales (sale_number, cashier_user_id, customer_id, subtotal, discount_amount, tax_amount, tax_percent, grand_total, notes)
@@ -953,7 +966,7 @@ app.post('/api/sales', authMiddleware, requireRoles('admin', 'kasir'), async (re
 
     await conn.query(
       `INSERT INTO payments (sale_id, method, amount) VALUES (:sid, :m, :amt)`,
-      { sid: saleId, m: payment_method || 'cash', amt: grand }
+      { sid: saleId, m: payMethod, amt: grand }
     );
     await conn.commit();
     await logActivity(req.user.id, 'create_sale', 'sale', saleId, { grand_total: grand }, req.ip);
@@ -981,11 +994,14 @@ app.get('/api/sales', authMiddleware, async (req, res) => {
       params.s = `%${search}%`;
     }
     const sortCol = ['id', 'grand_total', 'created_at'].includes(sort) ? `s.${sort}` : 's.id';
+    const payJoin = sqlSalePaymentJoin();
     const [rows] = await pool.query(
-      `SELECT SQL_CALC_FOUND_ROWS s.*, u.full_name AS cashier_name, c.name AS customer_name
+      `SELECT SQL_CALC_FOUND_ROWS s.*, u.full_name AS cashier_name, c.name AS customer_name,
+        pay.method AS payment_method
        FROM sales s
        JOIN users u ON u.id = s.cashier_user_id
        LEFT JOIN customers c ON c.id = s.customer_id
+       ${payJoin}
        ${where}
        ORDER BY ${sortCol} ${order} LIMIT :limit OFFSET :offset`,
       { ...params, limit, offset }
@@ -1101,11 +1117,51 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
 
     const cogsPerSale = `(SELECT COALESCE(SUM(si.quantity * pv.hpp), 0)
       FROM sale_items si JOIN product_variants pv ON pv.id = si.variant_id WHERE si.sale_id = sales.id)`;
+    const payJoin = sqlSalePaymentJoin();
     const [todayOmset] = await pool.query(
-      `SELECT COUNT(*) AS trx_count, COALESCE(SUM(grand_total),0) AS total_omset,
-        COALESCE(SUM(grand_total - ${cogsPerSale}), 0) AS net_profit
-       FROM sales
-       WHERE DATE(created_at) = CURDATE() ${cashierClause}`,
+      `SELECT COUNT(*) AS trx_count, COALESCE(SUM(s.grand_total),0) AS total_omset,
+        COALESCE(SUM(CASE WHEN pay.method = 'cash' THEN s.grand_total ELSE 0 END),0) AS omset_cash,
+        COALESCE(SUM(CASE WHEN pay.method = 'non_cash' THEN s.grand_total ELSE 0 END),0) AS omset_non_cash,
+        COALESCE(SUM(CASE WHEN pay.method = 'cash' THEN 1 ELSE 0 END),0) AS trx_cash,
+        COALESCE(SUM(CASE WHEN pay.method = 'non_cash' THEN 1 ELSE 0 END),0) AS trx_non_cash,
+        COALESCE(SUM(s.grand_total - ${cogsPerSale.replace(/sales\.id/g, 's.id')}), 0) AS net_profit
+       FROM sales s
+       ${payJoin}
+       WHERE DATE(s.created_at) = CURDATE() ${cashierClause.replace(/cashier_user_id/g, 's.cashier_user_id')}`,
+      params
+    );
+
+    const [inventory] = await pool.query(
+      `SELECT COALESCE(SUM(v.quantity),0) AS total_pairs,
+        COALESCE(SUM(v.quantity * v.hpp),0) AS total_asset
+       FROM product_variants v
+       JOIN product_models pm ON pm.id = v.model_id
+       WHERE v.is_active = 1 AND pm.is_active = 1`
+    );
+
+    const salesDateForTop = salesDateClause.replace(/created_at/g, 's.created_at');
+    const [topCategories] = await pool.query(
+      `SELECT c.name, SUM(si.quantity) AS qty, SUM(si.line_subtotal) AS revenue
+       FROM sale_items si
+       JOIN sales s ON s.id = si.sale_id
+       JOIN product_variants v ON v.id = si.variant_id
+       JOIN product_models pm ON pm.id = v.model_id
+       JOIN categories c ON c.id = pm.category_id
+       WHERE 1=1 ${salesDateForTop}
+       ${staffToday ? ' AND s.cashier_user_id = :staffSelf ' : ''}
+       GROUP BY c.id, c.name ORDER BY qty DESC LIMIT 5`,
+      params
+    );
+
+    const [topBrands] = await pool.query(
+      `SELECT COALESCE(NULLIF(TRIM(pm.brand), ''), 'Tanpa merek') AS brand, SUM(si.quantity) AS qty, SUM(si.line_subtotal) AS revenue
+       FROM sale_items si
+       JOIN sales s ON s.id = si.sale_id
+       JOIN product_variants v ON v.id = si.variant_id
+       JOIN product_models pm ON pm.id = v.model_id
+       WHERE 1=1 ${salesDateForTop}
+       ${staffToday ? ' AND s.cashier_user_id = :staffSelf ' : ''}
+       GROUP BY brand ORDER BY qty DESC LIMIT 5`,
       params
     );
 
@@ -1115,6 +1171,9 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
         scope: staffToday ? 'staff_today' : 'admin',
         sales_30d: { count: salesAgg[0].cnt, revenue: salesAgg[0].revenue },
         top_products: topProducts,
+        top_categories: topCategories,
+        top_brands: topBrands,
+        inventory: inventory[0],
         low_stock: lowStock,
         chart_sales: series,
         today_omset: todayOmset[0],
@@ -1220,12 +1279,18 @@ app.get('/api/reports/daily-omset', authMiddleware, requireRoles('admin', 'kasir
       cashierClause = ' AND s.cashier_user_id = :uid ';
       params.uid = req.user.id;
     }
+    const payJoin = sqlSalePaymentJoin();
     const [rows] = await pool.query(
       `SELECT DATE(s.created_at) AS report_date,
         COUNT(DISTINCT s.id) AS trx_count,
         COALESCE(SUM(s.grand_total),0) AS total_omset,
+        COALESCE(SUM(CASE WHEN pay.method = 'cash' THEN s.grand_total ELSE 0 END),0) AS omset_cash,
+        COALESCE(SUM(CASE WHEN pay.method = 'non_cash' THEN s.grand_total ELSE 0 END),0) AS omset_non_cash,
+        COALESCE(SUM(CASE WHEN pay.method = 'cash' THEN 1 ELSE 0 END),0) AS trx_cash,
+        COALESCE(SUM(CASE WHEN pay.method = 'non_cash' THEN 1 ELSE 0 END),0) AS trx_non_cash,
         COALESCE(SUM(s.grand_total - (${sqlSingleSaleCogsScalar()})), 0) AS net_profit
        FROM sales s
+       ${payJoin}
        WHERE s.created_at >= :from AND s.created_at < DATE_ADD(:to, INTERVAL 1 DAY)
        ${cashierClause}
        GROUP BY DATE(s.created_at) ORDER BY report_date`,
@@ -1249,13 +1314,16 @@ app.get('/api/reports/transaction-lines', authMiddleware, requireRoles('admin'),
       where += ' AND (s.sale_number LIKE :s OR pm.name LIKE :s) ';
       params.s = `%${search}%`;
     }
+    const payJoin = sqlSalePaymentJoin();
     const [rows] = await pool.query(
       `SELECT SQL_CALC_FOUND_ROWS s.created_at, s.sale_number, u.full_name AS cashier_name,
+        pay.method AS payment_method,
         CONCAT(pm.name, ' — ', v.color, ' ', v.size) AS product_name,
         v.sku, v.sport_type, si.quantity, si.unit_price, si.line_subtotal
        FROM sale_items si
        JOIN sales s ON s.id = si.sale_id
        JOIN users u ON u.id = s.cashier_user_id
+       ${payJoin}
        JOIN product_variants v ON v.id = si.variant_id
        JOIN product_models pm ON pm.id = v.model_id
        ${where}

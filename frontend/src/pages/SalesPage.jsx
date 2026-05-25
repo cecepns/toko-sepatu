@@ -9,11 +9,12 @@ import { useServerTable } from '@/hooks/useServerTable';
 import { useAuth } from '@/contexts/AuthContext';
 import { saleService } from '@/services/saleService';
 import { formatCurrency, formatDate } from '@/utils/format';
+import { paymentMethodLabel } from '@/utils/constants';
 
 export default function SalesPage() {
   const { user } = useAuth();
-  const canDeleteSale = user?.role_slug === 'super_admin' || user?.role_slug === 'admin_cabang';
-  const staffSelfOnly = user?.role_slug === 'kasir' || user?.role_slug === 'karyawan';
+  const canDeleteSale = user?.role_slug === 'admin';
+  const staffSelfOnly = user?.role_slug === 'kasir';
   const fetcher = useCallback((p) => saleService.list(p), []);
   const t = useServerTable(fetcher);
 
@@ -48,6 +49,19 @@ export default function SalesPage() {
         columns={[
           { key: 'sale_number', label: 'No Invoice', sortable: true },
           { key: 'grand_total', label: 'Total', sortable: true, render: (r) => formatCurrency(r.grand_total) },
+          {
+            key: 'payment_method',
+            label: 'Bayar',
+            render: (r) => (
+              <span
+                className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                  r.payment_method === 'cash' ? 'bg-emerald-100 text-emerald-800' : 'bg-sky-100 text-sky-800'
+                }`}
+              >
+                {paymentMethodLabel(r.payment_method)}
+              </span>
+            ),
+          },
           { key: 'cashier_name', label: 'Kasir' },
           { key: 'created_at', label: 'Tanggal', sortable: true, render: (r) => formatDate(r.created_at) },
           {

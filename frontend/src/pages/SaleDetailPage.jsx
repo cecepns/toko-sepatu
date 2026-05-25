@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { Printer, ArrowLeft } from 'lucide-react';
 import { saleService } from '@/services/saleService';
 import { formatCurrency, formatDate } from '@/utils/format';
+import { paymentMethodLabel } from '@/utils/constants';
 
 export default function SaleDetailPage() {
   const { id } = useParams();
@@ -76,6 +77,7 @@ export default function SaleDetailPage() {
         <hr className="my-3 border-dashed" />
         <p className="text-xs">No: {row.sale_number}</p>
         <p className="text-xs">Kasir: {row.cashier_name}</p>
+        <p className="text-xs">Bayar: {paymentMethodLabel(row.payments?.[0]?.method)}</p>
         <table className="mt-3 w-full text-xs">
           <tbody>
             {(row.items || []).map((i) => (

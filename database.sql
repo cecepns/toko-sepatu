@@ -172,7 +172,7 @@ CREATE TABLE sale_items (
 CREATE TABLE payments (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   sale_id BIGINT UNSIGNED NOT NULL,
-  method ENUM('cash','transfer','card','qris','other') NOT NULL DEFAULT 'cash',
+  method ENUM('cash','non_cash') NOT NULL DEFAULT 'cash' COMMENT 'cash=tunai, non_cash=non tunai',
   amount DECIMAL(14,2) NOT NULL,
   paid_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_pay_sale FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,

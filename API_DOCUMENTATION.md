@@ -1,6 +1,6 @@
 # API Documentation — POS Multi Cabang
 
-**Base URL:** `https://api.kingcreativestudio.my.id/pos-multicabang`  
+**Base URL:** `https://api.kingcreativestudio.my.id/believe-sport`  
 **Auth:** header `Authorization: Bearer <JWT>` (kecuali login & health).
 
 ## Format respons
