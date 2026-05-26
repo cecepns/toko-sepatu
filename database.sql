@@ -82,7 +82,7 @@ CREATE TABLE product_variants (
   barcode VARCHAR(64) NULL UNIQUE,
   color VARCHAR(64) NOT NULL,
   size VARCHAR(16) NOT NULL COMMENT 'Contoh: 39, 40, 41',
-  sport_type ENUM('futsal','sepak_bola','umum') NOT NULL DEFAULT 'umum',
+  sport_type ENUM('sepak_bola','futsal','running','badminton','umum') NOT NULL DEFAULT 'umum',
   hpp DECIMAL(14,2) NOT NULL DEFAULT 0,
   retail_price DECIMAL(14,2) NOT NULL DEFAULT 0,
   quantity INT NOT NULL DEFAULT 0,

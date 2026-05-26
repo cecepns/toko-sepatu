@@ -9,10 +9,14 @@ export const ROLE_LABELS = {
 };
 
 export const SPORT_TYPES = [
-  { value: 'futsal', label: 'Futsal' },
   { value: 'sepak_bola', label: 'Sepak Bola' },
+  { value: 'futsal', label: 'Futsal' },
+  { value: 'running', label: 'Running' },
+  { value: 'badminton', label: 'Badminton' },
   { value: 'umum', label: 'Umum' },
 ];
+
+export const SPORT_TYPE_VALUES = SPORT_TYPES.map((s) => s.value);
 
 export function sportTypeLabel(value) {
   return SPORT_TYPES.find((s) => s.value === value)?.label || value || '—';

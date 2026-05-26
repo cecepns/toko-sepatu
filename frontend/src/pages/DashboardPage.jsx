@@ -115,7 +115,7 @@ export default function DashboardPage() {
             <Footprints className="h-5 w-5 text-indigo-500" />
           </div>
           <p className="mt-3 text-3xl font-bold text-slate-900">{Number(inv?.total_pairs) || 0}</p>
-          <p className="mt-1 text-xs text-slate-500">pasang (jumlah stok semua varian aktif)</p>
+          <p className="mt-1 text-xs text-slate-500">pasang (hanya kategori sepatu, varian aktif)</p>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">

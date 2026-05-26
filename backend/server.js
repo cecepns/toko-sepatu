@@ -24,6 +24,15 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
 
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
+const SPORT_TYPE_VALUES = ['sepak_bola', 'futsal', 'running', 'badminton', 'umum'];
+
+function normalizeSportType(value) {
+  return SPORT_TYPE_VALUES.includes(value) ? value : 'umum';
+}
+
+/** Kategori dianggap sepatu jika nama mengandung "sepatu" (case-insensitive). */
+const SQL_CATEGORY_IS_SHOE = `LOWER(c.name) LIKE '%sepatu%'`;
+
 const pool = mysql.createPool({
   host: process.env.DB_HOST || '127.0.0.1',
   port: Number(process.env.DB_PORT) || 3306,
@@ -598,7 +607,7 @@ app.post('/api/product-variants', authMiddleware, requireRoles('admin'), async (
     const { model_id, color, size, sport_type, barcode, hpp, retail_price, quantity, min_stock, is_active } =
       req.body || {};
     if (!model_id || !color || !size) return fail(res, 400, 'Model, warna, dan ukuran wajib');
-    const st = ['futsal', 'sepak_bola', 'umum'].includes(sport_type) ? sport_type : 'umum';
+    const st = normalizeSportType(sport_type);
     await conn.beginTransaction();
     const sku = await nextSku(conn);
     const [ins] = await conn.query(
@@ -641,7 +650,7 @@ app.put('/api/product-variants/:id', authMiddleware, requireRoles('admin'), asyn
   try {
     const id = Number(req.params.id);
     const { color, size, sport_type, barcode, hpp, retail_price, min_stock, is_active } = req.body || {};
-    const st = ['futsal', 'sepak_bola', 'umum'].includes(sport_type) ? sport_type : 'umum';
+    const st = normalizeSportType(sport_type);
     await pool.query(
       `UPDATE product_variants SET color=:color, size=:size, sport_type=:st, barcode=:bc,
         hpp=:hpp, retail_price=:retail, min_stock=:minst, is_active=:act WHERE id=:id`,
@@ -673,19 +682,82 @@ app.delete('/api/product-variants/:id', authMiddleware, requireRoles('admin'), a
   }
 });
 
+function stockListWhere(query) {
+  let where = ' WHERE v.is_active = 1 AND pm.is_active = 1 ';
+  const params = {};
+  if (query.search) {
+    where += ' AND (v.sku LIKE :s OR pm.name LIKE :s OR v.color LIKE :s OR pm.brand LIKE :s) ';
+    params.s = `%${query.search}%`;
+  }
+  if (query.low_only === '1' || query.low_only === 'true') {
+    where += ' AND v.quantity <= v.min_stock ';
+  }
+  if (query.category_id) {
+    where += ' AND pm.category_id = :cid ';
+    params.cid = Number(query.category_id);
+  }
+  if (query.brand) {
+    where += ' AND TRIM(pm.brand) = :brand ';
+    params.brand = String(query.brand).trim();
+  }
+  return { where, params };
+}
+
 /* Stock */
+app.get('/api/stock/summary', authMiddleware, async (req, res) => {
+  try {
+    const { where, params } = stockListWhere(req.query);
+    const [totals] = await pool.query(
+      `SELECT COALESCE(SUM(v.quantity),0) AS total_quantity,
+        COUNT(v.id) AS variant_count,
+        COALESCE(SUM(v.quantity * v.hpp),0) AS total_asset
+       FROM product_variants v
+       JOIN product_models pm ON pm.id = v.model_id
+       JOIN categories c ON c.id = pm.category_id
+       ${where}`,
+      params
+    );
+    const [byCategory] = await pool.query(
+      `SELECT c.id AS category_id, c.name AS category_name,
+        COALESCE(SUM(v.quantity),0) AS total_quantity
+       FROM product_variants v
+       JOIN product_models pm ON pm.id = v.model_id
+       JOIN categories c ON c.id = pm.category_id
+       ${where}
+       GROUP BY c.id, c.name ORDER BY total_quantity DESC, c.name`,
+      params
+    );
+    const [byBrand] = await pool.query(
+      `SELECT COALESCE(NULLIF(TRIM(pm.brand), ''), 'Tanpa merek') AS brand,
+        COALESCE(SUM(v.quantity),0) AS total_quantity
+       FROM product_variants v
+       JOIN product_models pm ON pm.id = v.model_id
+       JOIN categories c ON c.id = pm.category_id
+       ${where}
+       GROUP BY brand ORDER BY total_quantity DESC, brand`,
+      params
+    );
+    const [brands] = await pool.query(
+      `SELECT DISTINCT TRIM(pm.brand) AS brand
+       FROM product_models pm
+       WHERE pm.is_active = 1 AND pm.brand IS NOT NULL AND TRIM(pm.brand) != ''
+       ORDER BY brand`
+    );
+    return ok(res, {
+      totals: totals[0],
+      by_category: byCategory,
+      by_brand: byBrand,
+      brands: brands.map((r) => r.brand),
+    });
+  } catch (e) {
+    return fail(res, 500, e.message);
+  }
+});
+
 app.get('/api/stock', authMiddleware, async (req, res) => {
   try {
     const { page, limit, offset, search, sort, order } = parsePagination(req.query);
-    let where = ' WHERE 1=1 ';
-    const params = {};
-    if (search) {
-      where += ' AND (v.sku LIKE :s OR pm.name LIKE :s OR v.color LIKE :s) ';
-      params.s = `%${search}%`;
-    }
-    if (req.query.low_only === '1' || req.query.low_only === 'true') {
-      where += ' AND v.quantity <= v.min_stock ';
-    }
+    const { where, params } = stockListWhere({ ...req.query, search });
     const sortCol = ['quantity', 'sku', 'name'].includes(sort)
       ? sort === 'name'
         ? 'pm.name'
@@ -1136,7 +1208,8 @@ app.get('/api/dashboard/summary', authMiddleware, async (req, res) => {
         COALESCE(SUM(v.quantity * v.hpp),0) AS total_asset
        FROM product_variants v
        JOIN product_models pm ON pm.id = v.model_id
-       WHERE v.is_active = 1 AND pm.is_active = 1`
+       JOIN categories c ON c.id = pm.category_id
+       WHERE v.is_active = 1 AND pm.is_active = 1 AND ${SQL_CATEGORY_IS_SHOE}`
     );
 
     const salesDateForTop = salesDateClause.replace(/created_at/g, 's.created_at');

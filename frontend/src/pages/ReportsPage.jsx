@@ -75,7 +75,7 @@ function rowsForSheet(tab, period, rows) {
       Produk: r.name,
       Warna: r.color,
       Ukuran: r.size,
-      Tipe: r.sport_type,
+      'Jenis olahraga': r.sport_type,
       Qty: r.quantity,
       Min: r.min_stock,
     }));

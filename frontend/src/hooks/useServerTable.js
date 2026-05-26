@@ -63,6 +63,7 @@ export function useServerTable(fetcher, extraDeps = []) {
       page,
       limit,
       search,
+      appliedSearch,
       sort,
       order,
       total,
@@ -73,6 +74,6 @@ export function useServerTable(fetcher, extraDeps = []) {
       setSort: setSortKey,
       reload: load,
     }),
-    [rows, loading, error, page, limit, search, sort, order, total, totalPages, load]
+    [rows, loading, error, page, limit, search, appliedSearch, sort, order, total, totalPages, load]
   );
 }

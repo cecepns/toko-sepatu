@@ -121,7 +121,7 @@ export default function ProductsPage() {
     <div>
       <PageHeader
         title="Produk"
-        subtitle="Model sepatu dengan varian warna, ukuran & tipe (futsal / sepak bola)"
+        subtitle="Model produk dengan varian warna, ukuran & jenis olahraga"
         action={
           <button
             type="button"
@@ -228,7 +228,7 @@ export default function ProductsPage() {
 
         {modal.row?.id && (
           <div className="mt-6 border-t border-slate-100 pt-4">
-            <h3 className="mb-3 text-sm font-semibold text-slate-800">Varian (warna · ukuran · tipe)</h3>
+            <h3 className="mb-3 text-sm font-semibold text-slate-800">Varian (warna · ukuran · jenis olahraga)</h3>
             <form onSubmit={saveVariant} className="mb-4 grid gap-2 rounded-xl border border-slate-100 bg-slate-50/80 p-3 sm:grid-cols-3 lg:grid-cols-6">
               <input
                 placeholder="Warna *"
@@ -245,6 +245,8 @@ export default function ProductsPage() {
                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
               />
               <select
+                aria-label="Jenis olahraga"
+                title="Jenis olahraga"
                 value={variantForm.sport_type}
                 onChange={(e) => setVariantForm({ ...variantForm, sport_type: e.target.value })}
                 className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
@@ -316,7 +318,7 @@ export default function ProductsPage() {
                     <th className="px-3 py-2">SKU</th>
                     <th className="px-3 py-2">Warna</th>
                     <th className="px-3 py-2">Ukuran</th>
-                    <th className="px-3 py-2">Tipe</th>
+                    <th className="px-3 py-2">Jenis olahraga</th>
                     <th className="px-3 py-2">Harga</th>
                     <th className="px-3 py-2">Stok</th>
                     <th className="px-3 py-2" />
