@@ -6,6 +6,7 @@ import { DataTable } from '@/components/DataTable';
 import { reportService } from '@/services/reportService';
 import { formatCurrency, formatExportDate, formatExportDateTime, formatReportDay, formatReportPeriod } from '@/utils/format';
 import { paymentMethodLabel } from '@/utils/constants';
+import { useAuth } from '@/contexts/AuthContext';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
