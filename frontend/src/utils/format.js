@@ -23,6 +23,19 @@ export function formatExportDate(d) {
   });
 }
 
+/** Tanggal grafik dashboard — hindari ISO mentah (…T17:00:00.000Z) */
+export function formatChartDay(value) {
+  if (value == null || value === '') return '-';
+  const s = String(value);
+  const dateOnly = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (dateOnly) return formatReportDay(dateOnly[1]);
+  const x = new Date(s);
+  if (!Number.isNaN(x.getTime())) {
+    return x.toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  }
+  return s;
+}
+
 /** Tanggal laporan YYYY-MM-DD → DD/MM/YYYY (seperti lembar harian) */
 export function formatReportDay(value) {
   if (value == null || value === '') return '-';

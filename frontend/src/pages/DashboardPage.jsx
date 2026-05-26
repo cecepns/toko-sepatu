@@ -3,7 +3,7 @@ import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianG
 import { TrendingUp, Wallet, Package, Tags, Award, Footprints, Boxes } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { dashboardService } from '@/services/dashboardService';
-import { formatCurrency } from '@/utils/format';
+import { formatChartDay, formatCurrency } from '@/utils/format';
 import toast from 'react-hot-toast';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -12,7 +12,7 @@ function chartLabel(row, staffToday) {
     const h = Number(row.h);
     return `${String(Number.isFinite(h) ? h : 0).padStart(2, '0')}:00`;
   }
-  return row.d;
+  return formatChartDay(row.d);
 }
 
 function TopList({ title, icon: Icon, items, valueKey = 'qty', emptyText = 'Belum ada data' }) {
@@ -171,7 +171,10 @@ export default function DashboardPage() {
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="#94a3b8" />
                 <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" />
-                <Tooltip formatter={(v) => formatCurrency(v)} />
+                <Tooltip
+                  formatter={(v) => [formatCurrency(v), 'Total']}
+                  labelFormatter={(label) => formatChartDay(label)}
+                />
                 <Area type="monotone" dataKey="total" stroke="#E61E2A" fill="url(#g)" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
